@@ -1,0 +1,144 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+/* CloudCost uses dark theme by default */
+
+:root {
+  /* CloudCost Dark Theme - High-end SaaS Style (Zinc/Slate inspired) */
+  --background: oklch(0.145 0 0); /* Very dark gray, almost black */
+  --foreground: oklch(0.985 0 0); /* Off-white text */
+  --card: oklch(0.16 0 0 / 0.4); /* Translucent cards for glassmorphism */
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.16 0 0 / 0.8); /* Semi-transparent popovers */
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.985 0 0); /* White primary for sharp contrast (like Vercel) */
+  --primary-foreground: oklch(0.2 0 0); /* Dark text on primary buttons */
+  --secondary: oklch(0.23 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.2 0 0);
+  --muted-foreground: oklch(0.65 0 0); /* Gray text */
+  --accent: oklch(0.23 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.57 0.22 25);
+  --destructive-foreground: oklch(1 0 0);
+  --border: oklch(0.28 0 0 / 0.3); /* Very subtle transparent borders */
+  --input: oklch(0.23 0 0 / 0.5);
+  --ring: oklch(0.985 0 0 / 0.5); /* White subtle glow ring */
+  
+  /* Chart colors - refined data palette (Stripe inspired) */
+  --chart-1: oklch(0.75 0.14 230); /* Light blue */
+  --chart-2: oklch(0.8 0.12 165); /* Soft green */
+  --chart-3: oklch(0.76 0.13 290); /* Purple/Indigo */
+  --chart-4: oklch(0.8 0.12 70); /* Amber/Yellow */
+  --chart-5: oklch(0.7 0.15 20); /* Rose/Red */
+  
+  /* Cloud provider brand colors - more saturated */
+  --aws: oklch(0.75 0.2 40);
+  --gcp: oklch(0.7 0.2 145);
+  --azure: oklch(0.65 0.18 250);
+  --radius: 0.75rem; /* Smoother, larger radius */
+  
+  /* Dark sidebar - translucent/floating feel */
+  --sidebar: oklch(0.145 0 0 / 0.4); 
+  --sidebar-foreground: oklch(0.85 0 0);
+  --sidebar-primary: oklch(0.985 0 0);
+  --sidebar-primary-foreground: oklch(0.2 0 0);
+  --sidebar-accent: oklch(0.23 0 0 / 0.5);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(0.28 0 0 / 0.2);
+  --sidebar-ring: oklch(0.985 0 0 / 0.5);
+  
+  /* Status colors - brightened for contrast */
+  --status-active: oklch(0.75 0.16 145);
+  --status-standby: oklch(0.7 0.14 250);
+  --status-suspended: oklch(0.8 0.15 70);
+  --status-recycled: oklch(0.5 0 0);
+}
+
+@theme inline {
+  --font-sans: 'Geist', 'Geist Fallback';
+  --font-mono: 'Geist Mono', 'Geist Mono Fallback';
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-chart-6: var(--chart-6);
+  --color-chart-7: var(--chart-7);
+  --color-chart-8: var(--chart-8);
+  --color-chart-9: var(--chart-9);
+  --color-chart-10: var(--chart-10);
+  --color-aws: var(--aws);
+  --color-gcp: var(--gcp);
+  --color-azure: var(--azure);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-status-active: var(--status-active);
+  --color-status-standby: var(--status-standby);
+  --color-status-suspended: var(--status-suspended);
+  --color-status-recycled: var(--status-recycled);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground transition-colors duration-300 antialiased;
+    background-image: 
+      radial-gradient(100% 100% at 50% 0%, oklch(0.22 0 0 / 0.5) 0%, transparent 50%),
+      radial-gradient(100% 100% at 0% 100%, oklch(0.18 0.05 250 / 0.15) 0%, transparent 40%);
+    background-attachment: fixed;
+    background-color: var(--background);
+  }
+  
+  /* Global smooth transitions for common interactive elements */
+  a, button, input, select, textarea, [role="button"] {
+    @apply transition-all duration-200 ease-in-out;
+  }
+
+  /* Reduce motion if user prefers it */
+  @media (prefers-reduced-motion: reduce) {
+    *, ::before, ::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
+  /* Make date picker icon visible on dark background */
+  input[type="date"]::-webkit-calendar-picker-indicator {
+    filter: invert(0.7);
+    cursor: pointer;
+  }
+}
