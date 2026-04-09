@@ -464,7 +464,8 @@ export interface DeployItem {
   sku_capacity: number
 }
 
-export interface PlanItem extends DeployItem {
+export interface PlanResultItem {
+  index: number
   action: "create" | "skip" | "conflict" | "unavailable" | "quota_risk"
   message: string | null
 }
@@ -476,7 +477,7 @@ export interface PlanResult {
   has_conflict: number
   unavailable: number
   quota_risk: number
-  items: PlanItem[]
+  items: PlanResultItem[]
 }
 
 export interface ExecuteResult {

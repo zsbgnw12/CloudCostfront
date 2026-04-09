@@ -69,7 +69,7 @@ import {
   type AzureModel,
   type DeployItem,
   type PlanResult,
-  type PlanItem,
+  type PlanResultItem,
   type DeployProgress,
   type ProgressItem,
 } from "@/lib/api"
@@ -384,9 +384,14 @@ export default function AzureDeployPage() {
 
   const startDeploy = useCallback(async () => {
     if (!planResult) return
+    const deployItems = buildDeployItems()
     const executableItems = planResult.items
       .filter(i => i.action === "create" || i.action === "quota_risk")
-      .map(i => ({ ...i }))
+      .map(planItem => ({
+        ...deployItems[planItem.index],
+        action: planItem.action,
+      }))
+      .filter(i => i.resource_group)
     if (executableItems.length === 0) return
 
     setDeploying(true)
@@ -625,6 +630,7 @@ export default function AzureDeployPage() {
               }}
               selectedResources={selectedResourceObjects}
               isModelInAccount={isModelInAccount}
+              deployItems={buildDeployItems()}
               skuName={skuName}
               onSkuChange={setSkuName}
               skuCapacity={skuCapacity}
@@ -1089,6 +1095,7 @@ function StepModels({
   onToggleModel,
   selectedResources,
   isModelInAccount,
+  deployItems,
   skuName,
   onSkuChange,
   skuCapacity,
@@ -1105,6 +1112,7 @@ function StepModels({
   onToggleModel: (key: string) => void
   selectedResources: AzureAIResource[]
   isModelInAccount: (name: string, version: string, accountName: string) => boolean
+  deployItems: DeployItem[]
   skuName: string
   onSkuChange: (v: string) => void
   skuCapacity: number
@@ -1276,9 +1284,12 @@ function StepModels({
                         </TableCell>
                         {selectedResources.map(res => {
                           const available = isModelInAccount(modelName, modelVersion, res.name)
-                          const planItem = planResult?.items.find(
-                            i => i.model_name === modelName && i.account_name === res.name
+                          const deployIdx = deployItems.findIndex(
+                            d => d.model_name === modelName && d.model_version === modelVersion && d.account_name === res.name
                           )
+                          const planItem = deployIdx >= 0
+                            ? planResult?.items.find(i => i.index === deployIdx)
+                            : undefined
                           return (
                             <TableCell key={res.name} className="text-center">
                               {planItem ? (
@@ -1340,7 +1351,7 @@ function StepModels({
 
 // ─── Matrix Cell ─────────────────────────────────────────────
 
-function MatrixCell({ planItem, skuCapacity }: { planItem: PlanItem; skuCapacity: number }) {
+function MatrixCell({ planItem, skuCapacity }: { planItem: PlanResultItem; skuCapacity: number }) {
   const cfg = ACTION_CONFIG[planItem.action]
   if (!cfg) return <span className="text-muted-foreground">-</span>
 
