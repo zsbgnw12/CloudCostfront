@@ -150,6 +150,7 @@ export default function AzureDeployPage() {
   const [skuCapacity, setSkuCapacity] = useState(10)
   const [namingRule, setNamingRule] = useState("{model}-{region}")
   const [planResult, setPlanResult] = useState<PlanResult | null>(null)
+  const [planDeployItems, setPlanDeployItems] = useState<DeployItem[]>([])
   const [planLoading, setPlanLoading] = useState(false)
   const [modelsLoading, setModelsLoading] = useState(false)
 
@@ -313,6 +314,7 @@ export default function AzureDeployPage() {
     if (step === 2) {
       setSelectedModels(new Set())
       setPlanResult(null)
+      setPlanDeployItems([])
       loadModels()
     }
   }, [step])
@@ -374,6 +376,7 @@ export default function AzureDeployPage() {
         subscription_id: selectedSub,
         items,
       })
+      setPlanDeployItems(items)
       setPlanResult(result)
     } catch { /* */ } finally {
       setPlanLoading(false)
@@ -383,18 +386,19 @@ export default function AzureDeployPage() {
   // ─── Step 4: Execute ─────────────────────────────────────
 
   const startDeploy = useCallback(async () => {
-    if (!planResult) return
-    const deployItems = buildDeployItems()
+    if (!planResult || planDeployItems.length === 0) return
     const executableItems = planResult.items
       .filter(i => i.action === "create" || i.action === "quota_risk")
-      .map(planItem => ({
-        ...deployItems[planItem.index],
-        action: planItem.action,
-      }))
-      .filter(i => i.resource_group)
+      .map(planItem => {
+        const item = planDeployItems[planItem.index]
+        if (!item) return null
+        return { ...item, action: planItem.action }
+      })
+      .filter((i): i is DeployItem & { action: string } => i !== null && !!i.resource_group)
     if (executableItems.length === 0) return
 
     setDeploying(true)
+    console.log("[execute] payload:", JSON.stringify({ subscription_id: selectedSub, items: executableItems }, null, 2))
     setLogs([`${new Date().toLocaleTimeString()} 开始部署 ${executableItems.length} 个模型...`])
 
     try {
@@ -408,7 +412,7 @@ export default function AzureDeployPage() {
       setLogs(prev => [...prev, `${new Date().toLocaleTimeString()} 启动部署失败: ${err?.message}`])
       setDeploying(false)
     }
-  }, [planResult, selectedSub])
+  }, [planResult, planDeployItems, selectedSub])
 
   // Poll progress
   useEffect(() => {
@@ -630,7 +634,7 @@ export default function AzureDeployPage() {
               }}
               selectedResources={selectedResourceObjects}
               isModelInAccount={isModelInAccount}
-              deployItems={buildDeployItems()}
+              deployItems={planDeployItems.length > 0 ? planDeployItems : buildDeployItems()}
               skuName={skuName}
               onSkuChange={setSkuName}
               skuCapacity={skuCapacity}
