@@ -300,7 +300,7 @@ export default function AzureDeployPage() {
       await Promise.all(
         selectedResourceObjects.map(async (res) => {
           const models = await azureDeployApi.accountModels(selectedSub, selectedRG, res.name)
-          accountModelsMap.set(res.name, models.filter(m => !m.is_deprecated))
+          accountModelsMap.set(res.name, models)
         })
       )
       setAllModels(accountModelsMap)
