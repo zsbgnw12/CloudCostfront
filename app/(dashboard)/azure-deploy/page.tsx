@@ -193,6 +193,7 @@ export default function AzureDeployPage() {
     try {
       const result = await msalInstance.loginPopup({
         scopes: msalConfig.scopes,
+        redirectUri: `${window.location.origin}/blank.html`,
       })
       setMsalAccount(result.account)
 
