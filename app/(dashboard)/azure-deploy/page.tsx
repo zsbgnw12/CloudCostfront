@@ -342,6 +342,9 @@ export default function AzureDeployPage() {
     const items: DeployItem[] = []
     selectedModels.forEach((modelKey) => {
       const [modelName, modelVersion] = modelKey.split("@")
+      const modelInfo = availableModels.find(
+        m => m.model_name === modelName && m.model_version === modelVersion
+      )
       selectedResourceObjects.forEach((res) => {
         if (isModelInRegion(modelName, modelVersion, res.location)) {
           items.push({
@@ -350,6 +353,7 @@ export default function AzureDeployPage() {
             region: res.location,
             model_name: modelName,
             model_version: modelVersion,
+            model_format: modelInfo?.model_format || "OpenAI",
             deployment_name: makeDeploymentName(namingRule, modelName, modelVersion, res.location),
             sku_name: skuName,
             sku_capacity: skuCapacity,
@@ -358,7 +362,7 @@ export default function AzureDeployPage() {
       })
     })
     return items
-  }, [selectedModels, selectedResourceObjects, selectedRG, namingRule, skuName, skuCapacity])
+  }, [selectedModels, selectedResourceObjects, selectedRG, namingRule, skuName, skuCapacity, availableModels])
 
   // ─── Step 3: Run Plan ────────────────────────────────────
 

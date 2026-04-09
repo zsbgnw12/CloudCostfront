@@ -435,6 +435,7 @@ export interface AzureAIResource {
 export interface AzureModel {
   model_name: string
   model_version: string
+  model_format: string
   capabilities: string[]
   available_skus: string[]
   max_capacity: number
@@ -455,6 +456,7 @@ export interface DeployItem {
   region: string
   model_name: string
   model_version: string
+  model_format: string
   deployment_name: string
   sku_name: string
   sku_capacity: number
