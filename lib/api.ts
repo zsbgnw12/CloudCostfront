@@ -539,9 +539,25 @@ export const azureDeployApi = {
       `/api/azure-deploy/resource-groups?subscription_id=${subId}`
     ),
 
+  createResourceGroup: (data: { subscription_id: string; name: string; location: string }) =>
+    azureRequest<AzureResourceGroup>(
+      "/api/azure-deploy/resource-groups",
+      { method: "POST", body: JSON.stringify(data) }
+    ),
+
   aiResources: (subId: string, rg: string) =>
     azureRequest<AzureAIResource[]>(
       `/api/azure-deploy/ai-resources?subscription_id=${subId}&resource_group=${rg}`
+    ),
+
+  createAIResource: (data: {
+    subscription_id: string; resource_group: string;
+    name: string; location: string;
+    kind?: string; sku_name?: string;
+  }) =>
+    azureRequest<AzureAIResource>(
+      "/api/azure-deploy/ai-resources",
+      { method: "POST", body: JSON.stringify(data) }
     ),
 
   models: (subId: string, region: string) =>

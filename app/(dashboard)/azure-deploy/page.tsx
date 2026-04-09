@@ -23,6 +23,7 @@ import {
   Server,
   Cpu,
   Rocket,
+  Plus,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -48,6 +49,13 @@ import {
 } from "@/components/ui/table"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog"
 import { cn } from "@/lib/utils"
 import {
   azureDeployApi,
@@ -590,6 +598,14 @@ export default function AzureDeployPage() {
                 })
               }}
               resLoading={resLoading}
+              onResourceGroupCreated={(rg) => {
+                setResourceGroups(prev => [...prev, rg])
+                setSelectedRG(rg.name)
+              }}
+              onAIResourceCreated={(res) => {
+                setAiResources(prev => [...prev, res])
+                setSelectedResources(prev => new Set(prev).add(res.name))
+              }}
             />
           )}
           {step === 2 && (
@@ -760,6 +776,8 @@ function StepConfig({
   selectedResources,
   onToggleResource,
   resLoading,
+  onResourceGroupCreated,
+  onAIResourceCreated,
 }: {
   subscriptions: AzureSubscription[]
   selectedSub: string
@@ -773,7 +791,71 @@ function StepConfig({
   selectedResources: Set<string>
   onToggleResource: (name: string) => void
   resLoading: boolean
+  onResourceGroupCreated: (rg: AzureResourceGroup) => void
+  onAIResourceCreated: (res: AzureAIResource) => void
 }) {
+  const [showCreateRG, setShowCreateRG] = useState(false)
+  const [newRGName, setNewRGName] = useState("")
+  const [newRGLocation, setNewRGLocation] = useState("eastus")
+  const [creatingRG, setCreatingRG] = useState(false)
+
+  const [showCreateAI, setShowCreateAI] = useState(false)
+  const [newAIName, setNewAIName] = useState("")
+  const [newAILocation, setNewAILocation] = useState("eastus")
+  const [creatingAI, setCreatingAI] = useState(false)
+  const [createError, setCreateError] = useState<string | null>(null)
+
+  const AZURE_REGIONS = [
+    "eastus", "eastus2", "westus", "westus2", "westus3",
+    "centralus", "northcentralus", "southcentralus",
+    "westeurope", "northeurope", "uksouth", "ukwest",
+    "francecentral", "germanywestcentral", "switzerlandnorth",
+    "southeastasia", "eastasia", "japaneast", "japanwest",
+    "australiaeast", "koreacentral", "canadaeast", "canadacentral",
+    "swedencentral", "norwayeast", "polandcentral",
+  ]
+
+  const handleCreateRG = async () => {
+    if (!selectedSub || !newRGName.trim()) return
+    setCreatingRG(true)
+    setCreateError(null)
+    try {
+      const rg = await azureDeployApi.createResourceGroup({
+        subscription_id: selectedSub,
+        name: newRGName.trim(),
+        location: newRGLocation,
+      })
+      onResourceGroupCreated(rg)
+      setShowCreateRG(false)
+      setNewRGName("")
+    } catch (err: any) {
+      setCreateError(err?.message ?? "创建失败")
+    } finally {
+      setCreatingRG(false)
+    }
+  }
+
+  const handleCreateAI = async () => {
+    if (!selectedSub || !selectedRG || !newAIName.trim()) return
+    setCreatingAI(true)
+    setCreateError(null)
+    try {
+      const res = await azureDeployApi.createAIResource({
+        subscription_id: selectedSub,
+        resource_group: selectedRG,
+        name: newAIName.trim(),
+        location: newAILocation,
+      })
+      onAIResourceCreated(res)
+      setShowCreateAI(false)
+      setNewAIName("")
+    } catch (err: any) {
+      setCreateError(err?.message ?? "创建失败")
+    } finally {
+      setCreatingAI(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
       {/* Subscription */}
@@ -801,7 +883,17 @@ function StepConfig({
 
       {/* Resource group */}
       <div className="space-y-2">
-        <Label>资源组</Label>
+        <div className="flex items-center justify-between">
+          <Label>资源组</Label>
+          <Button
+            variant="ghost" size="sm"
+            className="gap-1 h-7 text-xs"
+            disabled={!selectedSub}
+            onClick={() => { setShowCreateRG(true); setCreateError(null) }}
+          >
+            <Plus className="w-3 h-3" /> 新建资源组
+          </Button>
+        </div>
         {rgLoading ? (
           <div className="flex items-center gap-2 text-muted-foreground text-sm">
             <Loader2 className="w-4 h-4 animate-spin" /> 加载资源组...
@@ -824,7 +916,17 @@ function StepConfig({
 
       {/* AI Foundry resources */}
       <div className="space-y-3">
-        <Label>AI Foundry 资源（多选）</Label>
+        <div className="flex items-center justify-between">
+          <Label>AI Foundry 资源（多选）</Label>
+          <Button
+            variant="ghost" size="sm"
+            className="gap-1 h-7 text-xs"
+            disabled={!selectedRG}
+            onClick={() => { setShowCreateAI(true); setCreateError(null) }}
+          >
+            <Plus className="w-3 h-3" /> 新建 AI 资源
+          </Button>
+        </div>
         {resLoading ? (
           <div className="flex items-center gap-2 text-muted-foreground text-sm">
             <Loader2 className="w-4 h-4 animate-spin" /> 加载 AI 资源...
@@ -832,7 +934,16 @@ function StepConfig({
         ) : !selectedRG ? (
           <p className="text-sm text-muted-foreground">请先选择资源组</p>
         ) : aiResources.length === 0 ? (
-          <p className="text-sm text-muted-foreground">该资源组下没有 AI Foundry 资源</p>
+          <div className="text-center py-8 space-y-3">
+            <p className="text-sm text-muted-foreground">该资源组下没有 AI Foundry 资源</p>
+            <Button
+              variant="outline" size="sm"
+              className="gap-2"
+              onClick={() => { setShowCreateAI(true); setCreateError(null) }}
+            >
+              <Plus className="w-4 h-4" /> 创建第一个 AI 资源
+            </Button>
+          </div>
         ) : (
           <div className="rounded-xl border border-white/5 overflow-hidden">
             <Table>
@@ -880,6 +991,89 @@ function StepConfig({
           </p>
         )}
       </div>
+
+      {/* Create Resource Group Dialog */}
+      <Dialog open={showCreateRG} onOpenChange={setShowCreateRG}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>新建资源组</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label>资源组名称</Label>
+              <Input
+                placeholder="如 my-ai-resources"
+                value={newRGName}
+                onChange={(e) => setNewRGName(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>区域</Label>
+              <Select value={newRGLocation} onValueChange={setNewRGLocation}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {AZURE_REGIONS.map(r => (
+                    <SelectItem key={r} value={r}>{r}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            {createError && (
+              <p className="text-sm text-red-400">{createError}</p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowCreateRG(false)}>取消</Button>
+            <Button onClick={handleCreateRG} disabled={creatingRG || !newRGName.trim()}>
+              {creatingRG && <Loader2 className="w-4 h-4 animate-spin mr-2" />}
+              创建
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Create AI Resource Dialog */}
+      <Dialog open={showCreateAI} onOpenChange={setShowCreateAI}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>新建 AI Foundry 资源</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label>资源名称</Label>
+              <Input
+                placeholder="如 my-openai-eastus"
+                value={newAIName}
+                onChange={(e) => setNewAIName(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>区域</Label>
+              <Select value={newAILocation} onValueChange={setNewAILocation}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {AZURE_REGIONS.map(r => (
+                    <SelectItem key={r} value={r}>{r}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              将在资源组 <span className="font-medium text-foreground">{selectedRG}</span> 下创建 Azure OpenAI (S0) 资源
+            </p>
+            {createError && (
+              <p className="text-sm text-red-400">{createError}</p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowCreateAI(false)}>取消</Button>
+            <Button onClick={handleCreateAI} disabled={creatingAI || !newAIName.trim()}>
+              {creatingAI && <Loader2 className="w-4 h-4 animate-spin mr-2" />}
+              创建
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
