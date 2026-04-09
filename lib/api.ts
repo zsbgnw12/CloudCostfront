@@ -439,6 +439,8 @@ export interface AzureModel {
   capabilities: string[]
   available_skus: string[]
   max_capacity: number
+  lifecycle_status: string
+  is_deprecated: boolean
 }
 
 export interface AzureExistingDeployment {
@@ -569,6 +571,11 @@ export const azureDeployApi = {
   models: (subId: string, region: string) =>
     azureRequest<AzureModel[]>(
       `/api/azure-deploy/models?subscription_id=${subId}&region=${region}`
+    ),
+
+  accountModels: (subId: string, rg: string, accountName: string) =>
+    azureRequest<AzureModel[]>(
+      `/api/azure-deploy/account-models?subscription_id=${subId}&resource_group=${rg}&account_name=${accountName}`
     ),
 
   existingDeployments: (subId: string, rg: string, account: string) =>

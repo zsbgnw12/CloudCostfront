@@ -143,7 +143,7 @@ export default function AzureDeployPage() {
   const [rgLoading, setRgLoading] = useState(false)
   const [resLoading, setResLoading] = useState(false)
 
-  // Step 3: Models
+  // Step 3: Models — key = account_name
   const [allModels, setAllModels] = useState<Map<string, AzureModel[]>>(new Map())
   const [selectedModels, setSelectedModels] = useState<Set<string>>(new Set())
   const [skuName, setSkuName] = useState("GlobalStandard")
@@ -288,27 +288,26 @@ export default function AzureDeployPage() {
     return () => { cancelled = true }
   }, [selectedSub, selectedRG])
 
-  // ─── Step 3: Load models for selected resources' regions ──
+  // ─── Step 3: Load models for selected AI resources (account-level) ──
 
   const selectedResourceObjects = aiResources.filter(r => selectedResources.has(r.name))
-  const uniqueRegions = [...new Set(selectedResourceObjects.map(r => r.location))]
 
   const loadModels = useCallback(async () => {
-    if (!selectedSub || uniqueRegions.length === 0) return
+    if (!selectedSub || !selectedRG || selectedResourceObjects.length === 0) return
     setModelsLoading(true)
     try {
-      const regionModelsMap = new Map<string, AzureModel[]>()
+      const accountModelsMap = new Map<string, AzureModel[]>()
       await Promise.all(
-        uniqueRegions.map(async (region) => {
-          const models = await azureDeployApi.models(selectedSub, region)
-          regionModelsMap.set(region, models)
+        selectedResourceObjects.map(async (res) => {
+          const models = await azureDeployApi.accountModels(selectedSub, selectedRG, res.name)
+          accountModelsMap.set(res.name, models.filter(m => !m.is_deprecated))
         })
       )
-      setAllModels(regionModelsMap)
+      setAllModels(accountModelsMap)
     } catch { /* */ } finally {
       setModelsLoading(false)
     }
-  }, [selectedSub, uniqueRegions.join(",")])
+  }, [selectedSub, selectedRG, [...selectedResources].sort().join(",")])
 
   useEffect(() => {
     if (step === 2) {
@@ -318,7 +317,7 @@ export default function AzureDeployPage() {
     }
   }, [step])
 
-  // Get union of all available model names
+  // Get union of all available models across selected accounts
   const availableModels: AzureModel[] = (() => {
     const modelMap = new Map<string, AzureModel>()
     allModels.forEach((models) => {
@@ -330,11 +329,11 @@ export default function AzureDeployPage() {
     return Array.from(modelMap.values())
   })()
 
-  // Check if a model is available in a specific region
-  const isModelInRegion = (modelName: string, modelVersion: string, region: string): boolean => {
-    const regionModels = allModels.get(region)
-    if (!regionModels) return false
-    return regionModels.some(m => m.model_name === modelName && m.model_version === modelVersion)
+  // Check if a model is available in a specific account
+  const isModelInAccount = (modelName: string, modelVersion: string, accountName: string): boolean => {
+    const accountModels = allModels.get(accountName)
+    if (!accountModels) return false
+    return accountModels.some(m => m.model_name === modelName && m.model_version === modelVersion)
   }
 
   // Build deploy items from selection matrix
@@ -346,7 +345,7 @@ export default function AzureDeployPage() {
         m => m.model_name === modelName && m.model_version === modelVersion
       )
       selectedResourceObjects.forEach((res) => {
-        if (isModelInRegion(modelName, modelVersion, res.location)) {
+        if (isModelInAccount(modelName, modelVersion, res.name)) {
           items.push({
             resource_group: selectedRG,
             account_name: res.name,
@@ -625,7 +624,7 @@ export default function AzureDeployPage() {
                 setPlanResult(null)
               }}
               selectedResources={selectedResourceObjects}
-              isModelInRegion={isModelInRegion}
+              isModelInAccount={isModelInAccount}
               skuName={skuName}
               onSkuChange={setSkuName}
               skuCapacity={skuCapacity}
@@ -1089,7 +1088,7 @@ function StepModels({
   selectedModels,
   onToggleModel,
   selectedResources,
-  isModelInRegion,
+  isModelInAccount,
   skuName,
   onSkuChange,
   skuCapacity,
@@ -1105,7 +1104,7 @@ function StepModels({
   selectedModels: Set<string>
   onToggleModel: (key: string) => void
   selectedResources: AzureAIResource[]
-  isModelInRegion: (name: string, version: string, region: string) => boolean
+  isModelInAccount: (name: string, version: string, accountName: string) => boolean
   skuName: string
   onSkuChange: (v: string) => void
   skuCapacity: number
@@ -1276,7 +1275,7 @@ function StepModels({
                           <div className="text-xs text-muted-foreground">{modelVersion}</div>
                         </TableCell>
                         {selectedResources.map(res => {
-                          const available = isModelInRegion(modelName, modelVersion, res.location)
+                          const available = isModelInAccount(modelName, modelVersion, res.name)
                           const planItem = planResult?.items.find(
                             i => i.model_name === modelName && i.account_name === res.name
                           )
