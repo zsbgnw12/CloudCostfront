@@ -1059,7 +1059,7 @@ function StepConfig({
               </Select>
             </div>
             <p className="text-xs text-muted-foreground">
-              将在资源组 <span className="font-medium text-foreground">{selectedRG}</span> 下创建 Azure OpenAI (S0) 资源
+              将在资源组 <span className="font-medium text-foreground">{selectedRG}</span> 下创建 AI Foundry (AIServices S0) 资源
             </p>
             {createError && (
               <p className="text-sm text-red-400">{createError}</p>
