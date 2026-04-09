@@ -11,6 +11,7 @@ import {
   ChevronLeft,
   ChevronRight,
   FileSpreadsheet,
+  Sparkles,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -22,6 +23,7 @@ const navigation = [
   { name: "服务明细", href: "/costs", icon: BarChart3 },
   { name: "日报表", href: "/daily-report", icon: FileSpreadsheet },
   { name: "告警管理", href: "/alerts", icon: Bell },
+  { name: "AI 模型部署", href: "/azure-deploy", icon: Sparkles },
 ]
 
 export function Sidebar() {

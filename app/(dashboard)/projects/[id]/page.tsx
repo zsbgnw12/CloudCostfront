@@ -138,7 +138,6 @@ export default function ProjectDetailPage() {
             <div><p className="text-sm text-muted-foreground">业务分类ID</p><p className="font-medium">{project.category_id ?? "—"}</p></div>
             <div><p className="text-sm text-muted-foreground">分组标签</p><p className="font-medium">{project.group_label ?? "—"}</p></div>
             
-            <div><p className="text-sm text-muted-foreground">回收时间</p><p className="font-medium">{project.recycled_at ? new Date(project.recycled_at).toLocaleString("zh-CN") : "—"}</p></div>
             <div><p className="text-sm text-muted-foreground">备注</p><p className="font-medium">{project.notes ?? "—"}</p></div>
           </div></CardContent></Card>
         </TabsContent>

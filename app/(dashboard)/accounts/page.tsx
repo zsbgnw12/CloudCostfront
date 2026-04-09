@@ -147,24 +147,23 @@ export default function AccountsPage() {
     finally { setActionLoading(null) }
   }
 
-  const handleAction = async (action: "suspend" | "activate" | "delete") => {
+  const handleAction = async (action: "suspend" | "activate") => {
     if (!selectedId) return
-    const labels = { suspend: "停用", activate: "启用", delete: "删除" }
+    const labels = { suspend: "停用", activate: "启用" }
     if (!confirm(`确定${labels[action]}此账号？`)) return
     try {
       setActionLoading(action)
       if (action === "suspend") await accountsApi.suspend(selectedId)
       else if (action === "activate") await accountsApi.activate(selectedId)
-      else if (action === "delete") await accountsApi.delete(selectedId)
       await load(); await loadDetail(selectedId)
     } catch (e) { alert(`操作失败: ${e instanceof Error ? e.message : e}`) }
     finally { setActionLoading(null) }
   }
 
-  const handleHardDelete = async (id: number, name: string) => {
-    if (!confirm(`确定永久删除"${name}"？此操作不可恢复，将从数据库中彻底移除！`)) return
+  const handleDelete = async (id: number, name: string) => {
+    if (!confirm(`确定删除"${name}"？此操作不可恢复，将从数据库中彻底移除！`)) return
     try {
-      setActionLoading("hardDelete")
+      setActionLoading("delete")
       await accountsApi.hardDelete(id)
       if (selectedId === id) { setSelectedId(null); setDetail(null) }
       await load()
@@ -348,12 +347,29 @@ export default function AccountsPage() {
               <DropdownMenu>
                 <DropdownMenuTrigger asChild><Button variant="outline" size="icon"><MoreHorizontal className="w-4 h-4" /></Button></DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={openEdit}><Pencil className="w-4 h-4 mr-2" />编辑</DropdownMenuItem>
+                  <DropdownMenuItem onClick={openEdit} disabled={!!actionLoading}><Pencil className="w-4 h-4 mr-2" />编辑</DropdownMenuItem>
                   <DropdownMenuSeparator />
-                  {detail.status === "active" && <DropdownMenuItem onClick={() => handleAction("suspend")}><Pause className="w-4 h-4 mr-2" />停用</DropdownMenuItem>}
-                  {detail.status !== "active" && <DropdownMenuItem onClick={() => handleAction("activate")}><Play className="w-4 h-4 mr-2" />启用</DropdownMenuItem>}
+                  {detail.status === "active" && (
+                    <DropdownMenuItem onClick={() => handleAction("suspend")} disabled={!!actionLoading}>
+                      <Pause className="w-4 h-4 mr-2" />停用
+                    </DropdownMenuItem>
+                  )}
+                  {detail.status === "inactive" && (
+                    <DropdownMenuItem onClick={() => handleAction("activate")} disabled={!!actionLoading}>
+                      <Play className="w-4 h-4 mr-2" />启用
+                    </DropdownMenuItem>
+                  )}
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem className="text-destructive" onClick={() => handleAction("delete")}><Trash2 className="w-4 h-4 mr-2" />删除</DropdownMenuItem>
+                  <DropdownMenuItem
+                    className="text-destructive focus:text-destructive"
+                    onClick={(e) => {
+                      e.preventDefault()
+                      handleDelete(detail.id, detail.name)
+                    }}
+                    disabled={!!actionLoading}
+                  >
+                    <Trash2 className="w-4 h-4 mr-2" />删除
+                  </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>

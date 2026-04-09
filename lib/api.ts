@@ -334,7 +334,6 @@ export interface Project {
   category_id: number | null
   group_label: string | null
   status: string
-  recycled_at: string | null
   notes: string | null
   created_at: string
   updated_at: string
@@ -393,4 +392,188 @@ export const billingApi = {
     const q = qs.toString()
     return request<BillingDetail[]>(`/api/billing/detail${q ? `?${q}` : ""}`)
   },
+}
+
+// ─── Azure Deploy Types ──────────────────────────────────────
+
+export interface MsalConfig {
+  client_id: string
+  authority: string
+  redirect_uri: string
+  scopes: string[]
+}
+
+export interface AzureUser {
+  name: string
+  email: string
+  tenant_id: string
+}
+
+export interface AzureSubscription {
+  subscription_id: string
+  display_name: string
+  state: string
+}
+
+export interface AzureResourceGroup {
+  name: string
+  location: string
+}
+
+export interface AzureAIResource {
+  name: string
+  location: string
+  resource_group: string
+  endpoint: string
+  existing_deployments: number
+}
+
+export interface AzureModel {
+  model_name: string
+  model_version: string
+  capabilities: string[]
+  available_skus: string[]
+  max_capacity: number
+}
+
+export interface AzureExistingDeployment {
+  deployment_name: string
+  model_name: string
+  model_version: string
+  sku_name: string
+  sku_capacity: number
+  provisioning_state: string
+}
+
+export interface DeployItem {
+  resource_group: string
+  account_name: string
+  region: string
+  model_name: string
+  model_version: string
+  deployment_name: string
+  sku_name: string
+  sku_capacity: number
+}
+
+export interface PlanItem extends DeployItem {
+  action: "create" | "skip" | "conflict" | "unavailable" | "quota_risk"
+  message: string | null
+}
+
+export interface PlanResult {
+  total: number
+  can_create: number
+  will_skip: number
+  has_conflict: number
+  unavailable: number
+  quota_risk: number
+  items: PlanItem[]
+}
+
+export interface ExecuteResult {
+  task_id: string
+  total: number
+  message: string
+}
+
+export interface ProgressItem {
+  index: number
+  model_name: string
+  region: string
+  account_name: string
+  deployment_name: string
+  status: "pending" | "deploying" | "succeeded" | "failed"
+  error?: string | null
+}
+
+export interface DeployProgress {
+  task_id: string
+  status: "pending" | "running" | "completed"
+  total: number
+  succeeded: number
+  failed: number
+  deploying: number
+  pending: number
+  items: ProgressItem[]
+}
+
+// ─── Azure Deploy API (Bearer token) ────────────────────────
+
+let _getAzureToken: (() => Promise<string>) | null = null
+
+export function setAzureTokenProvider(fn: () => Promise<string>) {
+  _getAzureToken = fn
+}
+
+export function clearAzureTokenProvider() {
+  _getAzureToken = null
+}
+
+async function azureRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  if (!_getAzureToken) {
+    throw new Error("Azure 未登录，请先登录 Azure 账号")
+  }
+  const token = await _getAzureToken()
+  return request<T>(path, {
+    ...init,
+    headers: {
+      ...init?.headers,
+      Authorization: `Bearer ${token}`,
+    },
+  })
+}
+
+export const azureDeployApi = {
+  getMsalConfig: () =>
+    request<MsalConfig>("/api/azure-deploy/auth/config"),
+
+  validateToken: () =>
+    azureRequest<AzureUser>("/api/azure-deploy/auth/validate"),
+
+  subscriptions: () =>
+    azureRequest<AzureSubscription[]>("/api/azure-deploy/subscriptions"),
+
+  resourceGroups: (subId: string) =>
+    azureRequest<AzureResourceGroup[]>(
+      `/api/azure-deploy/resource-groups?subscription_id=${subId}`
+    ),
+
+  aiResources: (subId: string, rg: string) =>
+    azureRequest<AzureAIResource[]>(
+      `/api/azure-deploy/ai-resources?subscription_id=${subId}&resource_group=${rg}`
+    ),
+
+  models: (subId: string, region: string) =>
+    azureRequest<AzureModel[]>(
+      `/api/azure-deploy/models?subscription_id=${subId}&region=${region}`
+    ),
+
+  existingDeployments: (subId: string, rg: string, account: string) =>
+    azureRequest<AzureExistingDeployment[]>(
+      `/api/azure-deploy/existing-deployments?subscription_id=${subId}&resource_group=${rg}&account_name=${account}`
+    ),
+
+  plan: (data: { subscription_id: string; items: DeployItem[] }) =>
+    azureRequest<PlanResult>(
+      "/api/azure-deploy/plan",
+      { method: "POST", body: JSON.stringify(data) }
+    ),
+
+  execute: (data: { subscription_id: string; items: (DeployItem & { action: string })[] }) =>
+    azureRequest<ExecuteResult>(
+      "/api/azure-deploy/execute",
+      { method: "POST", body: JSON.stringify(data) }
+    ),
+
+  progress: (taskId: string) =>
+    azureRequest<DeployProgress>(
+      `/api/azure-deploy/progress/${taskId}`
+    ),
+
+  retryFailed: (taskId: string) =>
+    azureRequest<{ task_id: string; retrying: number; message: string }>(
+      `/api/azure-deploy/retry/${taskId}`,
+      { method: "POST" }
+    ),
 }
