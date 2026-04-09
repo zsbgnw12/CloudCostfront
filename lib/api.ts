@@ -4,11 +4,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), 30000) // 30s timeout
 
+  const { headers: extraHeaders, ...restInit } = init ?? {}
   try {
     const res = await fetch(`${API_BASE}${path}`, {
-      headers: { "Content-Type": "application/json", ...init?.headers },
+      ...restInit,
+      headers: {
+        "Content-Type": "application/json",
+        ...(extraHeaders as Record<string, string>),
+      },
       signal: controller.signal,
-      ...init,
     })
     if (!res.ok) {
       const body = await res.text().catch(() => "")
