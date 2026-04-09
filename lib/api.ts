@@ -529,7 +529,7 @@ export const azureDeployApi = {
     request<MsalConfig>("/api/azure-deploy/auth/config"),
 
   validateToken: () =>
-    azureRequest<AzureUser>("/api/azure-deploy/auth/validate"),
+    azureRequest<AzureUser>("/api/azure-deploy/auth/validate", { method: "POST" }),
 
   subscriptions: () =>
     azureRequest<AzureSubscription[]>("/api/azure-deploy/subscriptions"),
