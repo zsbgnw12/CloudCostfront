@@ -5,12 +5,13 @@ import { usePathname } from "next/navigation"
 import {
   LayoutDashboard,
   Cloud,
-  KeyRound,
+  Building2,
+  Package,
   BarChart3,
-  Bell,
   ChevronLeft,
   ChevronRight,
-  FileSpreadsheet,
+  Activity,
+  TrendingUp,
   Sparkles,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -19,11 +20,12 @@ import { useState } from "react"
 
 const navigation = [
   { name: "仪表盘", href: "/", icon: LayoutDashboard },
-  { name: "服务账号管理", href: "/accounts", icon: KeyRound },
-  { name: "服务明细", href: "/costs", icon: BarChart3 },
-  { name: "日报表", href: "/daily-report", icon: FileSpreadsheet },
-  { name: "告警管理", href: "/alerts", icon: Bell },
-  { name: "AI 模型部署", href: "/azure-deploy", icon: Sparkles },
+  { name: "供应商管理", href: "/suppliers", icon: Building2 },
+  { name: "货源管理", href: "/accounts", icon: Package },
+  { name: "模型管理", href: "/azure-deploy", icon: Sparkles },
+  { name: "计费", href: "/costs", icon: BarChart3 },
+  { name: "计量", href: "/metering", icon: Activity },
+  { name: "统计", href: "/daily-report", icon: TrendingUp },
 ]
 
 export function Sidebar() {

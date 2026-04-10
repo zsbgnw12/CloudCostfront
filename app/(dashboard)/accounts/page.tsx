@@ -2,9 +2,9 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react"
 import {
-  ChevronRight, ChevronDown, FolderOpen, Folder, Plus, MoreHorizontal,
+  ChevronRight, ChevronDown, FolderOpen, Plus, MoreHorizontal,
   KeyRound, Pause, Play, Trash2, Eye, EyeOff, Pencil,
-  Check, X, Loader2, ArrowLeft,
+  Loader2, ArrowLeft,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -73,8 +73,6 @@ export default function AccountsPage() {
   const [showCreds, setShowCreds] = useState(false)
   const [creds, setCreds] = useState<Record<string, unknown> | null>(null)
   const [editOpen, setEditOpen] = useState(false)
-  const [createGroupOpen, setCreateGroupOpen] = useState(false)
-  const [newGroup, setNewGroup] = useState({ provider: "aws", label: "" })
   const [actionLoading, setActionLoading] = useState<string | null>(null)
 
   // View mode: "cards" shows account cards for selected group, "detail" shows single account
@@ -171,32 +169,7 @@ export default function AccountsPage() {
     finally { setActionLoading(null) }
   }
 
-  const handleRenameGroup = async (provider: string, oldLabel: string, newLabel: string) => {
-    try {
-      await accountsApi.renameGroup(provider, oldLabel, newLabel)
-      await load()
-    } catch (e) { alert(`重命名失败: ${e instanceof Error ? e.message : e}`) }
-  }
 
-  const handleCreateGroup = async () => {
-    if (!newGroup.label.trim()) return
-    try {
-      setActionLoading("createGroup")
-      await accountsApi.createGroup(newGroup.provider, newGroup.label.trim())
-      setCreateGroupOpen(false)
-      setNewGroup({ provider: "aws", label: "" })
-      await mutateGroups()
-    } catch (e) { alert(`创建分组失败: ${e instanceof Error ? e.message : e}`) }
-    finally { setActionLoading(null) }
-  }
-
-  const handleDeleteGroup = async (provider: string, label: string) => {
-    if (!confirm(`确定删除分组"${label}"？分组下不能有账号。`)) return
-    try {
-      await accountsApi.deleteGroup(provider, label)
-      await mutateGroups()
-    } catch (e) { alert(`删除分组失败: ${e instanceof Error ? e.message : e}`) }
-  }
 
   const handleShowCreds = async () => {
     if (showCreds) { setShowCreds(false); setCreds(null); return }
@@ -242,39 +215,14 @@ export default function AccountsPage() {
       {/* ─── Left: Tree Panel ─── */}
       <div className="w-80 border-r border-border flex flex-col bg-card/50">
         <div className="flex items-center justify-between p-4 border-b border-border">
-          <h2 className="text-sm font-semibold text-foreground">服务账号</h2>
+          <h2 className="text-sm font-semibold text-foreground">货源列表</h2>
           <div className="flex items-center gap-1">
-            {/* Create Group Dialog */}
-            <Dialog open={createGroupOpen} onOpenChange={setCreateGroupOpen}>
-              <DialogTrigger asChild>
-                <Button size="sm" variant="outline" className="h-7 gap-1 text-xs"><FolderOpen className="w-3.5 h-3.5" />新建分组</Button>
-              </DialogTrigger>
-              <DialogContent className="max-w-sm">
-                <DialogHeader><DialogTitle>新建分组（渠道/供应商）</DialogTitle><DialogDescription>先创建分组，再在分组下添加服务账号</DialogDescription></DialogHeader>
-                <div className="space-y-4 py-2">
-                  <div className="space-y-2"><Label>云厂商</Label>
-                    <Select value={newGroup.provider} onValueChange={(v) => setNewGroup({ ...newGroup, provider: v })}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent><SelectItem value="aws">AWS</SelectItem><SelectItem value="gcp">GCP</SelectItem><SelectItem value="azure">Azure</SelectItem></SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2"><Label>分组名称（渠道/供应商）</Label><Input placeholder="如：渠道A、合作伙伴B" value={newGroup.label} onChange={(e) => setNewGroup({ ...newGroup, label: e.target.value })} /></div>
-                </div>
-                <DialogFooter>
-                  <Button variant="outline" onClick={() => setCreateGroupOpen(false)}>取消</Button>
-                  <Button onClick={handleCreateGroup} disabled={!newGroup.label.trim() || actionLoading === "createGroup"}>
-                    {actionLoading === "createGroup" && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}创建
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
-            {/* Create Account Dialog */}
             <Dialog open={createOpen} onOpenChange={setCreateOpen}>
               <DialogTrigger asChild>
-                <Button size="sm" className="h-7 gap-1 text-xs"><Plus className="w-3.5 h-3.5" />新建账号</Button>
+                <Button size="sm" className="h-7 gap-1 text-xs"><Plus className="w-3.5 h-3.5" />新建货源</Button>
               </DialogTrigger>
             <DialogContent className="max-w-lg">
-              <DialogHeader><DialogTitle>新建服务账号</DialogTitle><DialogDescription>在对应云厂商/合作伙伴下创建服务账号</DialogDescription></DialogHeader>
+              <DialogHeader><DialogTitle>新建货源</DialogTitle><DialogDescription>在对应供应商下创建货源账号</DialogDescription></DialogHeader>
               <div className="space-y-4 py-2">
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2"><Label>云厂商</Label>
@@ -283,7 +231,7 @@ export default function AccountsPage() {
                       <SelectContent><SelectItem value="aws">AWS</SelectItem><SelectItem value="gcp">GCP</SelectItem><SelectItem value="azure">Azure</SelectItem></SelectContent>
                     </Select>
                   </div>
-                  <div className="space-y-2"><Label>所属分组（渠道/供应商）</Label>
+                  <div className="space-y-2"><Label>所属供应商</Label>
                     <Select value={form.group_label} onValueChange={(v) => setForm({ ...form, group_label: v })}>
                       <SelectTrigger><SelectValue placeholder="选择分组" /></SelectTrigger>
                       <SelectContent>
@@ -316,7 +264,7 @@ export default function AccountsPage() {
           <div className="p-2">
             {loading ? <p className="text-sm text-muted-foreground text-center py-8">加载中...</p>
             : tree.length === 0 ? <p className="text-sm text-muted-foreground text-center py-8">暂无账号</p>
-            : tree.map((node) => <ProviderNode key={node.provider} node={node} selectedGroup={selectedGroup} onSelectGroup={handleSelectGroup} onRenameGroup={handleRenameGroup} onDeleteGroup={handleDeleteGroup} />)}
+            : tree.map((node) => <ProviderNode key={node.provider} node={node} selectedGroup={selectedGroup} onSelectGroup={handleSelectGroup} />)}
           </div>
         </ScrollArea>
       </div>
@@ -325,7 +273,7 @@ export default function AccountsPage() {
       <div className="flex-1 overflow-y-auto">
         {!selectedGroup ? (
           <div className="flex items-center justify-center h-full text-muted-foreground">
-            <div className="text-center"><FolderOpen className="w-12 h-12 mx-auto mb-4 opacity-30" /><p>选择左侧分组查看服务账号</p></div>
+            <div className="text-center"><FolderOpen className="w-12 h-12 mx-auto mb-4 opacity-30" /><p>选择左侧供应商查看货源</p></div>
           </div>
         ) : viewMode === "detail" && detail ? (
           /* ─── Detail View ─── */
@@ -376,7 +324,7 @@ export default function AccountsPage() {
             <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
               <Card className="bg-card border-border"><CardContent className="p-4"><p className="text-xs text-muted-foreground">状态</p><div className="mt-2"><Badge variant="secondary" className={cn("text-sm", STATUS_MAP[detail.status]?.class ?? "")}>{STATUS_MAP[detail.status]?.label ?? detail.status}</Badge></div></CardContent></Card>
               <Card className="bg-card border-border"><CardContent className="p-4"><p className="text-xs text-muted-foreground">创建时间</p><p className="text-sm font-medium mt-1">{new Date(detail.created_at).toLocaleDateString("zh-CN")}</p></CardContent></Card>
-              <Card className="bg-card border-border"><CardContent className="p-4"><p className="text-xs text-muted-foreground">分组</p><p className="text-sm font-medium mt-1">{detail.group_label ?? "—"}</p></CardContent></Card>
+              <Card className="bg-card border-border"><CardContent className="p-4"><p className="text-xs text-muted-foreground">所属供应商</p><p className="text-sm font-medium mt-1">{detail.group_label ?? "—"}</p></CardContent></Card>
             </div>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <Card className="bg-card border-border">
@@ -413,7 +361,7 @@ export default function AccountsPage() {
               </CardContent>
             </Card>
             
-            <Dialog open={editOpen} onOpenChange={setEditOpen}><DialogContent className="max-w-lg"><DialogHeader><DialogTitle>编辑服务账号</DialogTitle><DialogDescription>修改账号信息，留空密钥则不更新</DialogDescription></DialogHeader><div className="space-y-4 py-2"><div className="grid grid-cols-2 gap-4"><div className="space-y-2"><Label>账号名称</Label><Input value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} /></div><div className="space-y-2"><Label>所属分组（渠道/供应商）</Label><Select value={editForm.group_label} onValueChange={(v) => setEditForm({ ...editForm, group_label: v })}><SelectTrigger><SelectValue placeholder="选择分组" /></SelectTrigger><SelectContent>{groupsForProvider(detail?.provider ?? "aws").map((g) => <SelectItem key={g} value={g}>{g}</SelectItem>)}</SelectContent></Select></div></div><div className="space-y-2"><Label>账号ID</Label><Input value={editForm.external_project_id} onChange={(e) => setEditForm({ ...editForm, external_project_id: e.target.value })} /></div><SecretFieldsInput provider={detail?.provider ?? "aws"} value={editForm.secret_json} onChange={(v) => setEditForm({ ...editForm, secret_json: v })} label="更新密钥信息（留空不更新）" /><div className="space-y-2"><Label>备注</Label><Input value={editForm.notes} onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })} /></div></div><DialogFooter><Button variant="outline" onClick={() => setEditOpen(false)}>取消</Button><Button onClick={handleEdit} disabled={!editForm.name || !editForm.external_project_id || actionLoading === "edit"}>{actionLoading === "edit" && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}保存</Button></DialogFooter></DialogContent></Dialog>
+            <Dialog open={editOpen} onOpenChange={setEditOpen}><DialogContent className="max-w-lg"><DialogHeader><DialogTitle>编辑货源</DialogTitle><DialogDescription>修改货源信息，留空密钥则不更新</DialogDescription></DialogHeader><div className="space-y-4 py-2"><div className="grid grid-cols-2 gap-4"><div className="space-y-2"><Label>账号名称</Label><Input value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} /></div><div className="space-y-2"><Label>所属供应商</Label><Select value={editForm.group_label} onValueChange={(v) => setEditForm({ ...editForm, group_label: v })}><SelectTrigger><SelectValue placeholder="选择供应商" /></SelectTrigger><SelectContent>{groupsForProvider(detail?.provider ?? "aws").map((g) => <SelectItem key={g} value={g}>{g}</SelectItem>)}</SelectContent></Select></div></div><div className="space-y-2"><Label>账号ID</Label><Input value={editForm.external_project_id} onChange={(e) => setEditForm({ ...editForm, external_project_id: e.target.value })} /></div><SecretFieldsInput provider={detail?.provider ?? "aws"} value={editForm.secret_json} onChange={(v) => setEditForm({ ...editForm, secret_json: v })} label="更新密钥信息（留空不更新）" /><div className="space-y-2"><Label>备注</Label><Input value={editForm.notes} onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })} /></div></div><DialogFooter><Button variant="outline" onClick={() => setEditOpen(false)}>取消</Button><Button onClick={handleEdit} disabled={!editForm.name || !editForm.external_project_id || actionLoading === "edit"}>{actionLoading === "edit" && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}保存</Button></DialogFooter></DialogContent></Dialog>
           </div>
         ) : (
           /* ─── Cards Grid View ─── */
@@ -421,11 +369,11 @@ export default function AccountsPage() {
             <div className="flex items-center justify-between mb-6">
               <div>
                 <h2 className="text-lg font-semibold text-foreground flex items-center gap-2"><img src={`/${selectedGroup.provider}.svg`} alt={selectedGroup.provider} className="w-6 h-6" />{PROVIDER_LABELS[selectedGroup.provider] ?? selectedGroup.provider.toUpperCase()} / {selectedGroup.label}</h2>
-                <p className="text-sm text-muted-foreground mt-1">{groupAccounts.length} 个服务账号</p>
+                <p className="text-sm text-muted-foreground mt-1">{groupAccounts.length} 个货源</p>
               </div>
             </div>
             {groupAccounts.length === 0 ? (
-              <div className="flex items-center justify-center py-20 text-muted-foreground"><div className="text-center"><KeyRound className="w-12 h-12 mx-auto mb-4 opacity-30" /><p>该分组下暂无服务账号</p></div></div>
+              <div className="flex items-center justify-center py-20 text-muted-foreground"><div className="text-center"><KeyRound className="w-12 h-12 mx-auto mb-4 opacity-30" /><p>该供应商下暂无货源</p></div></div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                 {groupAccounts.map((a) => (
@@ -553,11 +501,9 @@ function SecretFieldsInput({ provider, value, onChange, label }: { provider: str
 interface TreeCallbacks {
   selectedGroup: { provider: string; label: string } | null
   onSelectGroup: (provider: string, label: string) => void
-  onRenameGroup: (provider: string, oldLabel: string, newLabel: string) => void
-  onDeleteGroup: (provider: string, label: string) => void
 }
 
-function ProviderNode({ node, selectedGroup, onSelectGroup, onRenameGroup, onDeleteGroup }: { node: TreeNode } & TreeCallbacks) {
+function ProviderNode({ node, selectedGroup, onSelectGroup }: { node: TreeNode } & TreeCallbacks) {
   const [open, setOpen] = useState(true)
   return (
     <div className="mb-1">
@@ -568,75 +514,25 @@ function ProviderNode({ node, selectedGroup, onSelectGroup, onRenameGroup, onDel
         <Badge variant="secondary" className="ml-auto text-xs">{node.groups.reduce((s, g) => s + g.accounts.length, 0)}</Badge>
       </button>
       {open && node.groups.map((g) => (
-        <GroupNode key={g.label} group={g} provider={node.provider} selectedGroup={selectedGroup} onSelectGroup={onSelectGroup} onRenameGroup={onRenameGroup} onDeleteGroup={onDeleteGroup} />
+        <GroupNode key={g.label} group={g} provider={node.provider} selectedGroup={selectedGroup} onSelectGroup={onSelectGroup} />
       ))}
     </div>
   )
 }
 
-function GroupNode({ group, provider, selectedGroup, onSelectGroup, onRenameGroup, onDeleteGroup }: {
+function GroupNode({ group, provider, selectedGroup, onSelectGroup }: {
   group: { label: string; accounts: ServiceAccount[] }; provider: string
 } & TreeCallbacks) {
-  const [editing, setEditing] = useState(false)
-  const [editValue, setEditValue] = useState(group.label)
   const isSelected = selectedGroup?.provider === provider && selectedGroup?.label === group.label
-
-  const handleRenameSubmit = () => {
-    const trimmed = editValue.trim()
-    if (trimmed && trimmed !== group.label) {
-      onRenameGroup(provider, group.label, trimmed)
-    }
-    setEditing(false)
-  }
-
-  const handleRenameKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") handleRenameSubmit()
-    if (e.key === "Escape") { setEditing(false); setEditValue(group.label) }
-  }
 
   return (
     <div className="ml-4">
-      <div className="flex items-center group">
-        {editing ? (
-          <div className="flex items-center gap-1 w-full px-2 py-1">
-            <FolderOpen className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-            <Input
-              className="h-6 text-sm px-1 py-0 flex-1"
-              value={editValue}
-              onChange={(e) => setEditValue(e.target.value)}
-              onKeyDown={handleRenameKeyDown}
-              onBlur={handleRenameSubmit}
-              autoFocus
-            />
-            <Button variant="ghost" size="icon" className="h-5 w-5" onClick={handleRenameSubmit}><Check className="w-3 h-3" /></Button>
-            <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => { setEditing(false); setEditValue(group.label) }}><X className="w-3 h-3" /></Button>
-          </div>
-        ) : (
-          <>
-            <button onClick={() => onSelectGroup(provider, group.label)} className={cn("flex items-center gap-2 flex-1 px-2 py-1 rounded text-sm", isSelected ? "bg-primary/20 text-primary font-medium" : "text-muted-foreground hover:bg-accent")}>
-              <FolderOpen className="w-3.5 h-3.5" />
-              <span>{group.label}</span>
-              <span className="ml-auto text-xs">{group.accounts.length}</span>
-            </button>
-            <Button
-              variant="ghost" size="icon"
-              className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
-              onClick={() => { setEditValue(group.label); setEditing(true) }}
-            >
-              <Pencil className="w-3 h-3" />
-            </Button>
-            {group.accounts.length === 0 && (
-              <Button
-                variant="ghost" size="icon"
-                className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 text-destructive hover:text-destructive"
-                onClick={() => onDeleteGroup(provider, group.label)}
-                title="删除空分组"
-              >
-                <Trash2 className="w-3 h-3" />
-              </Button>
-            )}
-          </>
-        )}
+      <div className="flex items-center">
+        <button onClick={() => onSelectGroup(provider, group.label)} className={cn("flex items-center gap-2 flex-1 px-2 py-1 rounded text-sm", isSelected ? "bg-primary/20 text-primary font-medium" : "text-muted-foreground hover:bg-accent")}>
+          <FolderOpen className="w-3.5 h-3.5" />
+          <span>{group.label}</span>
+          <span className="ml-auto text-xs">{group.accounts.length}</span>
+        </button>
       </div>
     </div>
   )
