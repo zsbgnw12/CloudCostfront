@@ -19,6 +19,11 @@ import { useAccounts, useGroups } from "@/hooks/use-data"
 const COLORS = ["#e8854a", "#5b8def", "#4ade80", "#eab308", "#d946ef", "#14b8a6", "#ef4444", "#818cf8", "#84cc16", "#38bdf8"]
 
 function fmt(v: number) { return `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` }
+function fmtUsage(v: number) {
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(2)}M`
+  if (v >= 1_000) return `${(v / 1_000).toFixed(1)}K`
+  return v.toFixed(2)
+}
 
 function getDefaultRange() {
   const now = new Date()
@@ -221,11 +226,17 @@ export default function CostsPage() {
       ) : costs ? (
         <>
           {/* Summary */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <Card className="bg-card border-border">
               <CardContent className="p-4">
                 <p className="text-xs text-muted-foreground">总费用</p>
                 <p className="text-2xl font-semibold mt-1">{fmt(costs.total_cost)}</p>
+              </CardContent>
+            </Card>
+            <Card className="bg-card border-border">
+              <CardContent className="p-4">
+                <p className="text-xs text-muted-foreground">总用量</p>
+                <p className="text-2xl font-semibold mt-1">{fmtUsage(costs.total_usage)}</p>
               </CardContent>
             </Card>
             <Card className="bg-card border-border">
@@ -310,12 +321,16 @@ export default function CostsPage() {
               <Table>
                 <TableHeader>
                   <TableRow className="border-border hover:bg-transparent">
-                    <TableHead>服务名称</TableHead><TableHead className="text-right">费用 (USD)</TableHead><TableHead className="text-right">占比</TableHead>
+                    <TableHead>服务名称</TableHead>
+                    <TableHead className="text-right">费用 (USD)</TableHead>
+                    <TableHead className="text-right">用量</TableHead>
+                    <TableHead>单位</TableHead>
+                    <TableHead className="text-right">占比</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {costs.services.length === 0 ? (
-                    <TableRow><TableCell colSpan={3} className="text-center text-muted-foreground py-8">暂无数据</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">暂无数据</TableCell></TableRow>
                   ) : costs.services.map((s, i) => (
                     <TableRow key={s.service} className="border-border">
                       <TableCell>
@@ -325,6 +340,8 @@ export default function CostsPage() {
                         </div>
                       </TableCell>
                       <TableCell className="text-right font-mono">{fmt(s.cost)}</TableCell>
+                      <TableCell className="text-right font-mono text-muted-foreground">{s.usage_quantity > 0 ? fmtUsage(s.usage_quantity) : "—"}</TableCell>
+                      <TableCell className="text-muted-foreground text-xs">{s.usage_unit || "—"}</TableCell>
                       <TableCell className="text-right text-muted-foreground">{costs.total_cost > 0 ? `${(s.cost / costs.total_cost * 100).toFixed(1)}%` : "—"}</TableCell>
                     </TableRow>
                   ))}

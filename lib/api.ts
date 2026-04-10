@@ -62,21 +62,27 @@ export interface ServiceAccountDetail extends ServiceAccount {
 export interface CostByService {
   service: string
   cost: number
+  usage_quantity: number
+  usage_unit: string | null
 }
 
 export interface DailyCost {
   date: string
   cost: number
+  usage_quantity: number
 }
 
 export interface DailyServiceCost {
   date: string
   service: string
   cost: number
+  usage_quantity: number
+  usage_unit: string | null
 }
 
 export interface CostSummary {
   total_cost: number
+  total_usage: number
   services: CostByService[]
   daily: DailyCost[]
   daily_by_service: DailyServiceCost[]
@@ -606,4 +612,97 @@ export const azureDeployApi = {
       `/api/azure-deploy/retry/${taskId}`,
       { method: "POST" }
     ),
+}
+
+// ─── Metering (billing_data 云同步用量) API ─────────────────
+
+export interface MeteringUsageSummary {
+  total_cost: number
+  total_usage: number
+  record_count: number
+  service_count: number
+}
+
+export interface MeteringDailyUsage {
+  date: string
+  usage_quantity: number
+  cost: number
+  record_count: number
+}
+
+export interface MeteringServiceUsage {
+  product: string
+  usage_quantity: number
+  usage_unit: string | null
+  cost: number
+  record_count: number
+}
+
+export interface MeteringUsageDetail {
+  id: number
+  date: string
+  provider: string
+  data_source_id: number
+  project_id: string | null
+  product: string | null
+  usage_type: string | null
+  region: string | null
+  cost: number
+  usage_quantity: number
+  usage_unit: string | null
+  currency: string
+}
+
+export interface MeteringProductOption {
+  product: string
+}
+
+export interface MeteringFilters {
+  date_start?: string
+  date_end?: string
+  provider?: string
+  product?: string
+}
+
+function meteringQs(filters?: MeteringFilters): string {
+  if (!filters) return ""
+  const qs = new URLSearchParams()
+  if (filters.date_start) qs.set("date_start", filters.date_start)
+  if (filters.date_end) qs.set("date_end", filters.date_end)
+  if (filters.provider) qs.set("provider", filters.provider)
+  if (filters.product) qs.set("product", filters.product)
+  const s = qs.toString()
+  return s ? `?${s}` : ""
+}
+
+export const meteringApi = {
+  summary: (filters?: MeteringFilters) =>
+    request<MeteringUsageSummary>(`/api/metering/summary${meteringQs(filters)}`),
+
+  daily: (filters?: MeteringFilters) =>
+    request<MeteringDailyUsage[]>(`/api/metering/daily${meteringQs(filters)}`),
+
+  byService: (filters?: MeteringFilters) =>
+    request<MeteringServiceUsage[]>(`/api/metering/by-service${meteringQs(filters)}`),
+
+  products: (provider?: string) =>
+    request<MeteringProductOption[]>(`/api/metering/products${provider ? `?provider=${provider}` : ""}`),
+
+  detail: (filters?: MeteringFilters & { page?: number; page_size?: number }) => {
+    const qs = new URLSearchParams()
+    if (filters?.date_start) qs.set("date_start", filters.date_start)
+    if (filters?.date_end) qs.set("date_end", filters.date_end)
+    if (filters?.provider) qs.set("provider", filters.provider)
+    if (filters?.product) qs.set("product", filters.product)
+    if (filters?.page) qs.set("page", String(filters.page))
+    if (filters?.page_size) qs.set("page_size", String(filters.page_size))
+    const s = qs.toString()
+    return request<MeteringUsageDetail[]>(`/api/metering/detail${s ? `?${s}` : ""}`)
+  },
+
+  detailCount: (filters?: MeteringFilters) =>
+    request<{ total: number }>(`/api/metering/detail/count${meteringQs(filters)}`),
+
+  exportUrl: (filters?: MeteringFilters) =>
+    `${API_BASE}/api/metering/export${meteringQs(filters)}`,
 }
