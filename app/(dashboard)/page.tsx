@@ -140,7 +140,13 @@ export default function DashboardPage() {
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255,255,255,0.05)" />
                     <XAxis dataKey="date" stroke="rgba(255,255,255,0.4)" fontSize={12} tickLine={false} axisLine={false} tickMargin={10} />
                     <YAxis stroke="rgba(255,255,255,0.4)" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(v) => `$${v}`} tickMargin={10} />
-                    <Tooltip cursor={{ fill: 'rgba(255,255,255,0.03)' }} contentStyle={{ backgroundColor: "rgba(20,20,20,0.8)", backdropFilter: "blur(12px)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "12px", color: "#fff", boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }} formatter={(v: number) => { return [fmt(v), "日消费"] }} />
+                    <Tooltip
+                      cursor={{ fill: "rgba(255,255,255,0.03)" }}
+                      contentStyle={{ backgroundColor: "rgba(20,20,20,0.92)", backdropFilter: "blur(12px)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: "12px", boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}
+                      labelStyle={{ color: "#fafafa" }}
+                      itemStyle={{ color: "#e4e4e7" }}
+                      formatter={(v: number) => [fmt(v), "日消费"]}
+                    />
                     <Bar dataKey="cost" fill="url(#colorCost)" radius={[4, 4, 0, 0]} maxBarSize={40} />
                   </BarChart>
                 </ResponsiveContainer>
@@ -163,7 +169,12 @@ export default function DashboardPage() {
                       <Pie data={byProvider ?? []} cx="50%" cy="50%" innerRadius={60} outerRadius={85} paddingAngle={4} dataKey="cost" nameKey="provider" stroke="none">
                         {(byProvider ?? []).map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
                       </Pie>
-                      <Tooltip contentStyle={{ backgroundColor: "rgba(20,20,20,0.8)", backdropFilter: "blur(12px)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "12px", color: "#fff", boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }} formatter={(v: number) => [fmt(v), "费用"]} />
+                      <Tooltip
+                        contentStyle={{ backgroundColor: "rgba(20,20,20,0.92)", backdropFilter: "blur(12px)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: "12px", boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}
+                        labelStyle={{ color: "#fafafa" }}
+                        itemStyle={{ color: "#e4e4e7" }}
+                        formatter={(v: number) => [fmt(v), "费用"]}
+                      />
                     </PieChart>
                   </ResponsiveContainer>
                 </div>
@@ -206,7 +217,13 @@ export default function DashboardPage() {
                   <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="rgba(255,255,255,0.05)" />
                   <XAxis type="number" stroke="rgba(255,255,255,0.4)" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(v) => `$${v}`} />
                   <YAxis type="category" dataKey="product" stroke="rgba(255,255,255,0.8)" fontSize={12} tickLine={false} axisLine={false} width={160} tickMargin={10} />
-                  <Tooltip cursor={{ fill: 'rgba(255,255,255,0.03)' }} contentStyle={{ backgroundColor: "rgba(20,20,20,0.8)", backdropFilter: "blur(12px)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "12px", color: "#fff", boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }} formatter={(v: number) => [fmt(v), "费用"]} />
+                  <Tooltip
+                    cursor={{ fill: "rgba(255,255,255,0.03)" }}
+                    contentStyle={{ backgroundColor: "rgba(20,20,20,0.92)", backdropFilter: "blur(12px)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: "12px", boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}
+                    labelStyle={{ color: "#fafafa" }}
+                    itemStyle={{ color: "#e4e4e7" }}
+                    formatter={(v: number) => [fmt(v), "费用"]}
+                  />
                   <Bar dataKey="cost" fill="url(#colorTop)" radius={[0, 4, 4, 0]} />
                 </BarChart>
               </ResponsiveContainer>
