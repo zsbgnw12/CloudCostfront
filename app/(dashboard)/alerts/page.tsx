@@ -13,8 +13,10 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { alertsApi, accountsApi, type AlertRule, type AlertHistory, type ServiceAccount, type RuleStatus } from "@/lib/api"
-import { useAccounts } from "@/hooks/use-data"
+import { alertsApi, accountsApi, type AlertRule, type AlertHistory, type RuleStatus } from "@/lib/api"
+import { useAccounts, useSuppliers, useSupplySourcesAll } from "@/hooks/use-data"
+
+const PROVIDER_LABELS: Record<string, string> = { aws: "AWS", gcp: "GCP", azure: "Azure" }
 
 const THRESHOLD_LABELS: Record<string, string> = {
   daily_absolute: "日费用超限",
@@ -29,10 +31,21 @@ export default function AlertsPage() {
   const [rules, setRules] = useState<AlertRule[]>([])
   const [history, setHistory] = useState<AlertHistory[]>([])
   const { data: accounts = [] } = useAccounts()
+  const { data: suppliers = [] } = useSuppliers()
+  const { data: supplySources = [] } = useSupplySourcesAll()
   const [ruleStatusData, setRuleStatusData] = useState<RuleStatus[]>([])
   const [loading, setLoading] = useState(true)
   const [dialogOpen, setDialogOpen] = useState(false)
-  const [form, setForm] = useState({ name: "", provider: "", group: "", account_id: "", threshold_type: "daily_absolute", threshold_value: "", notify_webhook: "", notify_email: "" })
+  const [form, setForm] = useState({
+    name: "",
+    supplier_id: "",
+    supply_source_id: "",
+    account_id: "",
+    threshold_type: "daily_absolute",
+    threshold_value: "",
+    notify_webhook: "",
+    notify_email: "",
+  })
   const [actionLoading, setActionLoading] = useState<string | null>(null)
 
   const load = useCallback(async () => {
@@ -48,30 +61,35 @@ export default function AlertsPage() {
   }, [])
   useEffect(() => { load() }, [load])
 
-  // Cascading filter helpers
-  const formProviders = useMemo(() => {
-    const set = new Set(accounts.map((a) => a.provider))
-    return Array.from(set).sort()
-  }, [accounts])
-  const formGroups = useMemo(() => {
-    if (!form.provider) return []
-    const set = new Set<string>()
-    accounts.filter((a) => a.provider === form.provider).forEach((a) => set.add(a.supplier_name ?? "(未分组)"))
-    return Array.from(set).sort()
-  }, [accounts, form.provider])
+  const formSources = useMemo(() => {
+    if (!form.supplier_id) return []
+    const sid = Number(form.supplier_id)
+    return supplySources
+      .filter((s) => s.supplier_id === sid)
+      .sort((a, b) => a.provider.localeCompare(b.provider))
+  }, [supplySources, form.supplier_id])
+
   const formAccounts = useMemo(() => {
-    if (!form.provider) return []
+    if (!form.supplier_id) return []
+    const allowedSourceIds = new Set(formSources.map((s) => s.id))
     return accounts.filter((a) => {
-      if (a.provider !== form.provider) return false
-      if (form.group) {
-        const label = a.supplier_name ?? "(未分组)"
-        if (label !== form.group) return false
-      }
+      if (!allowedSourceIds.has(a.supply_source_id)) return false
+      if (form.supply_source_id && a.supply_source_id !== Number(form.supply_source_id)) return false
       return true
     })
-  }, [accounts, form.provider, form.group])
+  }, [accounts, form.supplier_id, form.supply_source_id, formSources])
 
-  const resetForm = () => setForm({ name: "", provider: "", group: "", account_id: "", threshold_type: "daily_absolute", threshold_value: "", notify_webhook: "", notify_email: "" })
+  const resetForm = () =>
+    setForm({
+      name: "",
+      supplier_id: "",
+      supply_source_id: "",
+      account_id: "",
+      threshold_type: "daily_absolute",
+      threshold_value: "",
+      notify_webhook: "",
+      notify_email: "",
+    })
 
   const selectedAccountName = (targetId: string | null) => {
     if (!targetId) return "全局"
@@ -127,23 +145,45 @@ export default function AlertsPage() {
             <div className="space-y-4 py-4">
               <div className="space-y-2"><Label>规则名称</Label><Input placeholder="如：账号A日费用超限" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
               <div className="space-y-2"><Label>服务账号</Label>
-                <div className="grid grid-cols-3 gap-2">
-                  <Select value={form.provider} onValueChange={(v) => setForm({ ...form, provider: v, group: "", account_id: "" })}>
-                    <SelectTrigger><SelectValue placeholder="云厂商" /></SelectTrigger>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <Select
+                    value={form.supplier_id}
+                    onValueChange={(v) => setForm({ ...form, supplier_id: v, supply_source_id: "", account_id: "" })}
+                  >
+                    <SelectTrigger><SelectValue placeholder="供应商" /></SelectTrigger>
                     <SelectContent>
-                      {formProviders.map((p) => <SelectItem key={p} value={p}>{p.toUpperCase()}</SelectItem>)}
+                      {[...suppliers].sort((a, b) => a.name.localeCompare(b.name)).map((s) => (
+                        <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
-                  <Select value={form.group} onValueChange={(v) => setForm({ ...form, group: v, account_id: "" })} disabled={!form.provider}>
-                    <SelectTrigger><SelectValue placeholder="分组" /></SelectTrigger>
+                  <Select
+                    value={form.supply_source_id}
+                    onValueChange={(v) => setForm({ ...form, supply_source_id: v, account_id: "" })}
+                    disabled={!form.supplier_id}
+                  >
+                    <SelectTrigger><SelectValue placeholder="货源" /></SelectTrigger>
                     <SelectContent>
-                      {formGroups.map((g) => <SelectItem key={g} value={g}>{g}</SelectItem>)}
+                      {formSources.map((src) => (
+                        <SelectItem key={src.id} value={String(src.id)}>
+                          {PROVIDER_LABELS[src.provider] ?? src.provider.toUpperCase()}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
-                  <Select value={form.account_id} onValueChange={(v) => setForm({ ...form, account_id: v })} disabled={!form.provider}>
+                  <Select
+                    value={form.account_id}
+                    onValueChange={(v) => setForm({ ...form, account_id: v })}
+                    disabled={!form.supplier_id}
+                  >
                     <SelectTrigger><SelectValue placeholder="服务账号" /></SelectTrigger>
                     <SelectContent>
-                      {formAccounts.map((a) => <SelectItem key={a.id} value={String(a.id)}>{a.name}</SelectItem>)}
+                      {formAccounts.map((a) => (
+                        <SelectItem key={a.id} value={String(a.id)}>
+                          {a.name}{" "}
+                          <span className="text-xs text-muted-foreground">({a.external_project_id})</span>
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>

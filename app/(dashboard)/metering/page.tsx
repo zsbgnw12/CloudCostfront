@@ -22,13 +22,15 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { meteringApi, dataSourcesApi, type DataSourceRow } from "@/lib/api"
+import { meteringApi } from "@/lib/api"
 import {
   useMeteringSummary, useMeteringDaily, useMeteringByService,
   useMeteringProducts, useMeteringDetail, useMeteringDetailCount,
-  useAccounts,
+  useAccounts, useSuppliers, useSupplySourcesAll,
 } from "@/hooks/use-data"
 import { cn } from "@/lib/utils"
+
+const PROVIDER_LABELS: Record<string, string> = { aws: "AWS", gcp: "GCP", azure: "Azure" }
 
 const COLORS = [
   "#8b5cf6", "#3b82f6", "#06b6d4", "#10b981", "#f59e0b",
@@ -57,71 +59,97 @@ function fmtCost(n: unknown): string {
 export default function MeteringPage() {
   const today = new Date()
   const { data: accounts = [] } = useAccounts()
-  const [dataSources, setDataSources] = useState<DataSourceRow[]>([])
+  const { data: suppliers = [] } = useSuppliers()
+  const { data: sources = [] } = useSupplySourcesAll()
   const [dateStart, setDateStart] = useState(format(startOfMonth(today), "yyyy-MM-dd"))
   const [dateEnd, setDateEnd] = useState(format(today, "yyyy-MM-dd"))
-  const [provider, setProvider] = useState<string>("")
-  const [groupLabel, setGroupLabel] = useState<string>("__all__")
-  const [dataSourceId, setDataSourceId] = useState<string>("__all__")
-  const [accountId, setAccountId] = useState<string>("__all__")
+  const [supplierId, setSupplierId] = useState("__all__")
+  const [supplySourceId, setSupplySourceId] = useState("__all__")
+  const [accountId, setAccountId] = useState("__all__")
   const [product, setProduct] = useState<string>("")
   const [page, setPage] = useState(1)
   const pageSize = 20
 
   useEffect(() => {
-    dataSourcesApi.list().then(setDataSources).catch(() => setDataSources([]))
-  }, [])
+    setSupplySourceId("__all__")
+    setAccountId("__all__")
+    setProduct("")
+    setPage(1)
+  }, [supplierId])
 
-  const channelOptions = useMemo(() => {
-    const accs = provider ? accounts.filter((a) => a.provider === provider) : accounts
-    const set = new Set<string>()
-    accs.forEach((a) => set.add(a.supplier_name ?? "(未分组)"))
-    return Array.from(set).sort()
-  }, [accounts, provider])
+  useEffect(() => {
+    setAccountId("__all__")
+    setProduct("")
+    setPage(1)
+  }, [supplySourceId])
 
-  const visibleDataSources = useMemo(() => {
-    const active = dataSources.filter((d) => d.is_active)
-    if (!provider) return active
-    const allowed = new Set(accounts.filter((a) => a.provider === provider).map((a) => a.id))
-    return active.filter((d) => allowed.has(d.cloud_account_id))
-  }, [dataSources, accounts, provider])
+  const sourcesInScope = useMemo(() => {
+    if (supplierId === "__all__") return sources
+    return sources.filter((s) => String(s.supplier_id) === supplierId)
+  }, [sources, supplierId])
+
+  const sortedSourcesInScope = useMemo(
+    () =>
+      [...sourcesInScope].sort((a, b) => {
+        const an = a.supplier_name ?? ""
+        const bn = b.supplier_name ?? ""
+        if (an !== bn) return an.localeCompare(bn)
+        return a.provider.localeCompare(b.provider)
+      }),
+    [sourcesInScope],
+  )
 
   const filteredAccounts = useMemo(() => {
     return accounts.filter((a) => {
-      if (provider && a.provider !== provider) return false
-      if (groupLabel !== "__all__") {
-        const label = a.supplier_name ?? "(未分组)"
-        if (label !== groupLabel) return false
+      if (supplierId !== "__all__") {
+        const allowed = new Set(sourcesInScope.map((s) => s.id))
+        if (!allowed.has(a.supply_source_id)) return false
       }
-      if (dataSourceId !== "__all__") {
-        const ds = dataSources.find((d) => d.id === Number(dataSourceId))
-        if (ds && ds.cloud_account_id !== a.id) return false
-      }
+      if (supplySourceId !== "__all__" && a.supply_source_id !== Number(supplySourceId)) return false
       return true
     })
-  }, [accounts, provider, groupLabel, dataSourceId, dataSources])
+  }, [accounts, supplierId, supplySourceId, sourcesInScope])
+
+  const supplierNameForApi = useMemo(() => {
+    if (supplierId === "__all__") return undefined
+    return suppliers.find((s) => String(s.id) === supplierId)?.name
+  }, [supplierId, suppliers])
+
+  const providerForMetering = useMemo(() => {
+    if (supplySourceId !== "__all__") {
+      return sources.find((s) => String(s.id) === supplySourceId)?.provider
+    }
+    return undefined
+  }, [supplySourceId, sources])
 
   const scopeExtra = useMemo(
     () => ({
       account_id: accountId !== "__all__" ? Number(accountId) : undefined,
-      supplier_name: groupLabel !== "__all__" ? groupLabel : undefined,
-      data_source_id: dataSourceId !== "__all__" ? Number(dataSourceId) : undefined,
+      supply_source_id:
+        accountId === "__all__" && supplySourceId !== "__all__" ? Number(supplySourceId) : undefined,
+      supplier_name:
+        accountId === "__all__" && supplySourceId === "__all__" && supplierId !== "__all__"
+          ? supplierNameForApi
+          : undefined,
     }),
-    [accountId, groupLabel, dataSourceId],
+    [accountId, supplySourceId, supplierId, supplierNameForApi],
   )
 
-  const filters = useMemo(() => ({
-    date_start: dateStart || undefined,
-    date_end: dateEnd || undefined,
-    provider: provider || undefined,
-    product: product || undefined,
-    ...scopeExtra,
-  }), [dateStart, dateEnd, provider, product, scopeExtra])
+  const filters = useMemo(
+    () => ({
+      date_start: dateStart || undefined,
+      date_end: dateEnd || undefined,
+      provider: providerForMetering,
+      product: product || undefined,
+      ...scopeExtra,
+    }),
+    [dateStart, dateEnd, providerForMetering, product, scopeExtra],
+  )
 
   const { data: summary, isLoading: summaryLoading } = useMeteringSummary(filters)
   const { data: daily = [] } = useMeteringDaily(filters)
   const { data: byService = [] } = useMeteringByService(filters)
-  const { data: products = [] } = useMeteringProducts(provider || undefined, scopeExtra)
+  const { data: products = [] } = useMeteringProducts(providerForMetering || undefined, scopeExtra)
   const { data: detail = [] } = useMeteringDetail({ ...filters, page, page_size: pageSize })
   const { data: countData } = useMeteringDetailCount(filters)
   const totalCount = countData?.total ?? 0
@@ -191,54 +219,39 @@ export default function MeteringPage() {
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">供应商</Label>
-              <Select value={provider} onValueChange={(v) => {
-                setProvider(v === "all" ? "" : v)
-                setProduct("")
-                setGroupLabel("__all__")
-                setDataSourceId("__all__")
-                setAccountId("__all__")
-                setPage(1)
-              }}>
-                <SelectTrigger className="h-8 w-28 text-sm"><SelectValue placeholder="全部" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">全部</SelectItem>
-                  <SelectItem value="aws">AWS</SelectItem>
-                  <SelectItem value="gcp">GCP</SelectItem>
-                  <SelectItem value="azure">Azure</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">渠道</Label>
-              <Select value={groupLabel} onValueChange={(v) => {
-                setGroupLabel(v)
-                setAccountId("__all__")
-                setProduct("")
-                setPage(1)
-              }}>
+              <Select
+                value={supplierId}
+                onValueChange={(v) => {
+                  setSupplierId(v)
+                  setPage(1)
+                }}
+              >
                 <SelectTrigger className="h-8 w-40 text-sm"><SelectValue placeholder="全部" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="__all__">全部渠道</SelectItem>
-                  {channelOptions.map((g) => (
-                    <SelectItem key={g} value={g}>{g}</SelectItem>
+                  <SelectItem value="__all__">全部供应商</SelectItem>
+                  {[...suppliers].sort((a, b) => a.name.localeCompare(b.name)).map((s) => (
+                    <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">货源</Label>
-              <Select value={dataSourceId} onValueChange={(v) => {
-                setDataSourceId(v)
-                setAccountId("__all__")
-                setProduct("")
-                setPage(1)
-              }}>
-                <SelectTrigger className="h-8 w-44 text-sm"><SelectValue placeholder="全部" /></SelectTrigger>
+              <Select
+                value={supplySourceId}
+                onValueChange={(v) => {
+                  setSupplySourceId(v)
+                  setPage(1)
+                }}
+                disabled={supplierId !== "__all__" && sourcesInScope.length === 0}
+              >
+                <SelectTrigger className="h-8 w-52 text-sm"><SelectValue placeholder="全部货源" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__all__">全部货源</SelectItem>
-                  {visibleDataSources.map((ds) => (
-                    <SelectItem key={ds.id} value={String(ds.id)}>
-                      {`${ds.name} (#${ds.id})`}
+                  {sortedSourcesInScope.map((src) => (
+                    <SelectItem key={src.id} value={String(src.id)}>
+                      {PROVIDER_LABELS[src.provider] ?? src.provider.toUpperCase()}
+                      <span className="text-muted-foreground text-xs ml-1">· {src.supplier_name ?? "—"}</span>
                     </SelectItem>
                   ))}
                 </SelectContent>

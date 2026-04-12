@@ -15,8 +15,10 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table"
 import { accountsApi, type DailyReportRow, type CostSummary } from "@/lib/api"
-import { useAccounts } from "@/hooks/use-data"
+import { useAccounts, useSuppliers, useSupplySourcesAll } from "@/hooks/use-data"
 import { cn } from "@/lib/utils"
+
+const PROVIDER_LABELS: Record<string, string> = { aws: "AWS", gcp: "GCP", azure: "Azure" }
 
 const LINE_COLORS = ["#e8854a", "#5b8def", "#4ade80", "#eab308", "#d946ef", "#14b8a6", "#ef4444", "#818cf8", "#84cc16", "#38bdf8"]
 const SVC_COLORS = ["#e8854a", "#5b8def", "#4ade80", "#eab308", "#d946ef", "#14b8a6", "#ef4444", "#818cf8", "#84cc16", "#38bdf8"]
@@ -45,9 +47,13 @@ function getDefaultRange() {
 export default function DailyReportPage() {
   const [rows, setRows] = useState<DailyReportRow[]>([])
   const { data: accounts = [] } = useAccounts()
+  const { data: suppliers = [] } = useSuppliers()
+  const { data: sources = [] } = useSupplySourcesAll()
   const [dateRange, setDateRange] = useState(getDefaultRange)
-  const [provider, setProvider] = useState("aws")
-  const [groupFilter, setGroupFilter] = useState("__all__")
+  /** 供应商 id，__all__ 表示不限 */
+  const [supplierId, setSupplierId] = useState("__all__")
+  /** 货源 supply_sources.id */
+  const [supplySourceId, setSupplySourceId] = useState("__all__")
   const [accountFilter, setAccountFilter] = useState("__all__")
   const [loading, setLoading] = useState(false)
   /** 草稿字符串：允许空串、中间态，避免受控 number 一删就回 0 */
@@ -66,10 +72,17 @@ export default function DailyReportPage() {
   const costFactor = useMemo(() => 1 - discountPct / 100, [discountPct])
   const formatMoney = useCallback((n: number) => fmtMoney(n, costFactor), [costFactor])
 
+  /** 选定单一货源时用于缩小日报 API 的 provider 参数；否则拉全量再在客户端按账号筛 */
+  const providerForApi = useMemo(() => {
+    if (supplySourceId === "__all__") return undefined
+    const src = sources.find((s) => String(s.id) === supplySourceId)
+    return src?.provider
+  }, [supplySourceId, sources])
+
   const loadData = useCallback(async () => {
     try {
       setLoading(true)
-      const data = await accountsApi.dailyReport(dateRange.start, dateRange.end, provider)
+      const data = await accountsApi.dailyReport(dateRange.start, dateRange.end, providerForApi)
       setRows(data)
     } catch (e) {
       console.error(e)
@@ -77,38 +90,51 @@ export default function DailyReportPage() {
     } finally {
       setLoading(false)
     }
-  }, [dateRange, provider])
+  }, [dateRange, providerForApi])
 
   useEffect(() => {
     loadData()
   }, [loadData])
 
-  // Reset group/account filter when provider changes
   useEffect(() => {
-    setGroupFilter("__all__")
+    setSupplySourceId("__all__")
     setAccountFilter("__all__")
-  }, [provider])
+  }, [supplierId])
 
-  // Available groups for the selected provider
-  const groups = useMemo(() => {
-    const set = new Set<string>()
-    accounts
-      .filter((a) => a.provider === provider)
-      .forEach((a) => set.add(a.supplier_name ?? "(未分组)"))
-    return Array.from(set).sort()
-  }, [accounts, provider])
+  useEffect(() => {
+    setAccountFilter("__all__")
+  }, [supplySourceId])
 
-  // Available accounts for the selected provider + group
+  const sourcesInScope = useMemo(() => {
+    if (supplierId === "__all__") return sources
+    const sid = Number(supplierId)
+    return sources.filter((s) => s.supplier_id === sid)
+  }, [sources, supplierId])
+
   const filteredAccounts = useMemo(() => {
     return accounts.filter((a) => {
-      if (a.provider !== provider) return false
-      if (groupFilter !== "__all__") {
-        const label = a.supplier_name ?? "(未分组)"
-        if (label !== groupFilter) return false
+      if (supplierId !== "__all__") {
+        const allowed = new Set(sourcesInScope.map((s) => s.id))
+        if (!allowed.has(a.supply_source_id)) return false
       }
+      if (supplySourceId !== "__all__" && a.supply_source_id !== Number(supplySourceId)) return false
       return true
     })
-  }, [accounts, provider, groupFilter])
+  }, [accounts, supplierId, supplySourceId, sourcesInScope])
+
+  const chartScopeLabel = useMemo(() => {
+    if (supplySourceId !== "__all__") {
+      const src = sources.find((s) => String(s.id) === supplySourceId)
+      if (!src) return "—"
+      const pl = PROVIDER_LABELS[src.provider] ?? src.provider.toUpperCase()
+      return `${src.supplier_name ?? "—"} · ${pl}`
+    }
+    if (supplierId !== "__all__") {
+      const sup = suppliers.find((s) => String(s.id) === supplierId)
+      return sup ? `${sup.name}（全部货源）` : "—"
+    }
+    return "全部"
+  }, [supplySourceId, supplierId, sources, suppliers])
 
   /** 与上方筛选完全一致：单选服务账号则用该账号；「全部账号」则用当前列表第一个（随分组/云厂商变） */
   const costTargetAccountId = useMemo((): number | null => {
@@ -260,9 +286,20 @@ export default function DailyReportPage() {
   }, [costSummary, costFactor])
 
   const handleExportAll = () => {
-    const url = accountsApi.dailyReportExportUrl(dateRange.start, dateRange.end, provider)
+    const url = accountsApi.dailyReportExportUrl(dateRange.start, dateRange.end, providerForApi)
     window.open(url, "_blank")
   }
+
+  const sortedSourcesInScope = useMemo(
+    () =>
+      [...sourcesInScope].sort((a, b) => {
+        const an = a.supplier_name ?? ""
+        const bn = b.supplier_name ?? ""
+        if (an !== bn) return an.localeCompare(bn)
+        return a.provider.localeCompare(b.provider)
+      }),
+    [sourcesInScope],
+  )
 
   const handleExportAccount = (accountId: number) => {
     const url = accountsApi.costsExportUrl(accountId, dateRange.start, dateRange.end)
@@ -275,7 +312,7 @@ export default function DailyReportPage() {
         <div>
           <h1 className="text-2xl font-semibold text-foreground">统计</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            同一套筛选与查询：日报透视、费用构成与使用明细共用；「全部账号」时费用取当前列表第一个账号。
+            筛选顺序：供应商 → 货源 → 服务账号。同一套筛选用于日报透视、费用构成与使用明细；「全部账号」时费用取当前列表第一个账号。
           </p>
         </div>
         <Button onClick={handleExportAll} disabled={filteredRows.length === 0 || loading} className="gap-2">
@@ -288,23 +325,33 @@ export default function DailyReportPage() {
         <CardContent className="p-4">
           <div className="flex flex-wrap items-end gap-4">
             <div className="space-y-1">
-              <Label className="text-xs">云厂商</Label>
-              <Select value={provider} onValueChange={setProvider}>
-                <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
+              <Label className="text-xs">供应商</Label>
+              <Select value={supplierId} onValueChange={(v) => setSupplierId(v)}>
+                <SelectTrigger className="w-44"><SelectValue placeholder="选择供应商" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="aws">AWS</SelectItem>
-                  <SelectItem value="gcp">GCP</SelectItem>
-                  <SelectItem value="azure">Azure</SelectItem>
+                  <SelectItem value="__all__">全部供应商</SelectItem>
+                  {[...suppliers].sort((a, b) => a.name.localeCompare(b.name)).map((s) => (
+                    <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
             <div className="space-y-1">
-              <Label className="text-xs">分组</Label>
-              <Select value={groupFilter} onValueChange={(v) => { setGroupFilter(v); setAccountFilter("__all__") }}>
-                <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+              <Label className="text-xs">货源</Label>
+              <Select
+                value={supplySourceId}
+                onValueChange={(v) => setSupplySourceId(v)}
+                disabled={supplierId !== "__all__" && sourcesInScope.length === 0}
+              >
+                <SelectTrigger className="w-56"><SelectValue placeholder="全部货源" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="__all__">全部分组</SelectItem>
-                  {groups.map((g) => <SelectItem key={g} value={g}>{g}</SelectItem>)}
+                  <SelectItem value="__all__">全部货源</SelectItem>
+                  {sortedSourcesInScope.map((src) => (
+                    <SelectItem key={src.id} value={String(src.id)}>
+                      {PROVIDER_LABELS[src.provider] ?? src.provider.toUpperCase()}
+                      <span className="text-muted-foreground text-xs ml-1">· {src.supplier_name ?? "—"}</span>
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -316,7 +363,8 @@ export default function DailyReportPage() {
                   <SelectItem value="__all__">全部账号</SelectItem>
                   {filteredAccounts.map((a) => (
                     <SelectItem key={a.id} value={String(a.id)}>
-                      {a.name} <span className="text-xs text-muted-foreground ml-1">({a.external_project_id})</span>
+                      {a.name}{" "}
+                      <span className="text-xs text-muted-foreground ml-1">({a.external_project_id})</span>
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -388,7 +436,7 @@ export default function DailyReportPage() {
           {/* 2 每日费用趋势 */}
           <Card className="bg-card border-border">
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium">每日费用趋势（{provider.toUpperCase()}）</CardTitle>
+              <CardTitle className="text-sm font-medium">每日费用趋势（{chartScopeLabel}）</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="h-[350px]">
@@ -437,7 +485,7 @@ export default function DailyReportPage() {
           {/* 3 每日费用明细（按日透视） */}
           <Card className="bg-card border-border">
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium">每日费用明细（{provider.toUpperCase()}）</CardTitle>
+              <CardTitle className="text-sm font-medium">每日费用明细（{chartScopeLabel}）</CardTitle>
             </CardHeader>
             <CardContent className="p-0">
               {pivot.dates.length === 0 ? (

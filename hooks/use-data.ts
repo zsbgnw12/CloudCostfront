@@ -14,7 +14,15 @@ import {
   type MeteringUsageDetail,
   type MeteringProductOption,
   type MeteringFilters,
+  type SupplierRow,
 } from "@/lib/api"
+
+// ─── Suppliers（列表页与筛选共用）────────────────────────────
+export function useSuppliers() {
+  return useSWR<SupplierRow[]>("suppliers-list", () => suppliersApi.list(), {
+    dedupingInterval: 60000,
+  })
+}
 
 // ─── Accounts (shared across many pages) ────────────────────
 export function useAccounts(params?: { provider?: string; status?: string }) {
@@ -63,7 +71,7 @@ export function useNotifications(limit = 10) {
 // ─── Metering（billing_data，与 /api/metering 一致）────────────────
 
 function meterKey(base: string, f?: MeteringFilters) {
-  return `${base}:${f?.date_start ?? ""}:${f?.date_end ?? ""}:${f?.provider ?? ""}:${f?.product ?? ""}:${f?.account_id ?? ""}:${f?.supplier_name ?? ""}:${f?.data_source_id ?? ""}`
+  return `${base}:${f?.date_start ?? ""}:${f?.date_end ?? ""}:${f?.provider ?? ""}:${f?.product ?? ""}:${f?.account_id ?? ""}:${f?.supply_source_id ?? ""}:${f?.supplier_name ?? ""}:${f?.data_source_id ?? ""}`
 }
 
 export function useMeteringSummary(filters?: MeteringFilters) {
@@ -80,8 +88,8 @@ export function useMeteringByService(filters?: MeteringFilters) {
 }
 
 /** 服务下拉选项（可带与列表相同的渠道/货源/账号筛选） */
-export function useMeteringProducts(provider?: string, scope?: Pick<MeteringFilters, "account_id" | "supplier_name" | "data_source_id">) {
-  const sk = scope ? `${scope.account_id ?? ""}:${scope.supplier_name ?? ""}:${scope.data_source_id ?? ""}` : ""
+export function useMeteringProducts(provider?: string, scope?: Pick<MeteringFilters, "account_id" | "supply_source_id" | "supplier_name" | "data_source_id">) {
+  const sk = scope ? `${scope.account_id ?? ""}:${scope.supply_source_id ?? ""}:${scope.supplier_name ?? ""}:${scope.data_source_id ?? ""}` : ""
   return useSWR<MeteringProductOption[]>(
     `meter-products:${provider ?? ""}:${sk}`,
     () => meteringApi.products(provider, scope),
@@ -91,7 +99,7 @@ export function useMeteringProducts(provider?: string, scope?: Pick<MeteringFilt
 export function useMeteringDetail(
   filters?: MeteringFilters & { page?: number; page_size?: number },
 ) {
-  const key = `meter-detail:${filters?.date_start ?? ""}:${filters?.date_end ?? ""}:${filters?.provider ?? ""}:${filters?.product ?? ""}:${filters?.account_id ?? ""}:${filters?.supplier_name ?? ""}:${filters?.data_source_id ?? ""}:${filters?.page ?? 1}:${filters?.page_size ?? 50}`
+  const key = `meter-detail:${filters?.date_start ?? ""}:${filters?.date_end ?? ""}:${filters?.provider ?? ""}:${filters?.product ?? ""}:${filters?.account_id ?? ""}:${filters?.supply_source_id ?? ""}:${filters?.supplier_name ?? ""}:${filters?.data_source_id ?? ""}:${filters?.page ?? 1}:${filters?.page_size ?? 50}`
   return useSWR<MeteringUsageDetail[]>(key, () => meteringApi.detail(filters))
 }
 

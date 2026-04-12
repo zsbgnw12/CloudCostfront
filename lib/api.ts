@@ -708,9 +708,11 @@ export interface MeteringFilters {
   product?: string
   /** 服务账号 Project.id */
   account_id?: number
+  /** 货源 supply_sources.id */
+  supply_source_id?: number
   /** 供应商名称 suppliers.name */
   supplier_name?: string
-  /** 货源 data_source id */
+  /** 同步数据渠道 billing_data.data_source_id */
   data_source_id?: number
 }
 
@@ -722,6 +724,7 @@ function meteringQs(filters?: MeteringFilters): string {
   if (filters.provider) qs.set("provider", filters.provider)
   if (filters.product) qs.set("product", filters.product)
   if (filters.account_id != null) qs.set("account_id", String(filters.account_id))
+  if (filters.supply_source_id != null) qs.set("supply_source_id", String(filters.supply_source_id))
   if (filters.supplier_name) qs.set("supplier_name", filters.supplier_name)
   if (filters.data_source_id != null) qs.set("data_source_id", String(filters.data_source_id))
   const s = qs.toString()
@@ -754,10 +757,11 @@ export const meteringApi = {
   byService: (filters?: MeteringFilters) =>
     request<MeteringServiceUsage[]>(`/api/metering/by-service${meteringQs(filters)}`),
 
-  products: (provider?: string, extra?: Pick<MeteringFilters, "account_id" | "supplier_name" | "data_source_id">) => {
+  products: (provider?: string, extra?: Pick<MeteringFilters, "account_id" | "supply_source_id" | "supplier_name" | "data_source_id">) => {
     const qs = new URLSearchParams()
     if (provider) qs.set("provider", provider)
     if (extra?.account_id != null) qs.set("account_id", String(extra.account_id))
+    if (extra?.supply_source_id != null) qs.set("supply_source_id", String(extra.supply_source_id))
     if (extra?.supplier_name) qs.set("supplier_name", extra.supplier_name)
     if (extra?.data_source_id != null) qs.set("data_source_id", String(extra.data_source_id))
     const s = qs.toString()
@@ -771,6 +775,7 @@ export const meteringApi = {
     if (filters?.provider) qs.set("provider", filters.provider)
     if (filters?.product) qs.set("product", filters.product)
     if (filters?.account_id != null) qs.set("account_id", String(filters.account_id))
+    if (filters?.supply_source_id != null) qs.set("supply_source_id", String(filters.supply_source_id))
     if (filters?.supplier_name) qs.set("supplier_name", filters.supplier_name)
     if (filters?.data_source_id != null) qs.set("data_source_id", String(filters.data_source_id))
     if (filters?.page) qs.set("page", String(filters.page))
