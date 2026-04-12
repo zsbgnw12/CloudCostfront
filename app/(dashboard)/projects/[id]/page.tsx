@@ -81,7 +81,7 @@ export default function ProjectDetailPage() {
             <img src={`/${project.provider}.svg`} alt={project.provider} className="w-8 h-8" />
             <div>
               <h1 className="text-2xl font-semibold text-foreground">{project.external_project_id}</h1>
-              <p className="text-sm text-muted-foreground">{project.name} · {project.group_label ?? "无分组"}</p>
+              <p className="text-sm text-muted-foreground">{project.name} · {project.supplier_name ?? "无分组"}</p>
             </div>
           </div>
         </div>
@@ -90,7 +90,7 @@ export default function ProjectDetailPage() {
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <Card><CardContent className="p-4"><div className="flex items-center gap-3"><div className="p-2 rounded-lg bg-primary/20"><img src={`/${project.provider}.svg`} alt={project.provider} className="w-5 h-5" /></div><div><p className="text-xs text-muted-foreground">云厂商</p><p className="font-semibold">{PROVIDER_LABELS[project.provider] ?? project.provider.toUpperCase()}</p></div></div></CardContent></Card>
-        <Card><CardContent className="p-4"><div className="flex items-center gap-3"><div className="p-2 rounded-lg bg-chart-2/20"><FolderKanban className="w-5 h-5 text-chart-2" /></div><div><p className="text-xs text-muted-foreground">分组</p><p className="font-semibold">{project.group_label ?? "无"}</p></div></div></CardContent></Card>
+        <Card><CardContent className="p-4"><div className="flex items-center gap-3"><div className="p-2 rounded-lg bg-chart-2/20"><FolderKanban className="w-5 h-5 text-chart-2" /></div><div><p className="text-xs text-muted-foreground">分组</p><p className="font-semibold">{project.supplier_name ?? "无"}</p></div></div></CardContent></Card>
         <Card><CardContent className="p-4"><div className="flex items-center gap-3"><div className="p-2 rounded-lg bg-chart-4/20"><Calendar className="w-5 h-5 text-chart-4" /></div><div><p className="text-xs text-muted-foreground">创建日期</p><p className="font-semibold">{new Date(project.created_at).toLocaleDateString("zh-CN")}</p></div></div></CardContent></Card>
         <Card><CardContent className="p-4"><div className="flex items-center gap-3"><div className="p-2 rounded-lg bg-status-active/20"><Users className="w-5 h-5 text-status-active" /></div><div><p className="text-xs text-muted-foreground">状态</p><p className="font-semibold">{project.status}</p></div></div></CardContent></Card>
       </div>
@@ -136,7 +136,7 @@ export default function ProjectDetailPage() {
             <div><p className="text-sm text-muted-foreground">云厂商</p><p className="font-medium">{project.provider.toUpperCase()}</p></div>
             <div><p className="text-sm text-muted-foreground">数据源ID</p><p className="font-medium">{project.data_source_id ?? "—"}</p></div>
             <div><p className="text-sm text-muted-foreground">业务分类ID</p><p className="font-medium">{project.category_id ?? "—"}</p></div>
-            <div><p className="text-sm text-muted-foreground">分组标签</p><p className="font-medium">{project.group_label ?? "—"}</p></div>
+            <div><p className="text-sm text-muted-foreground">分组标签</p><p className="font-medium">{project.supplier_name ?? "—"}</p></div>
             
             <div><p className="text-sm text-muted-foreground">备注</p><p className="font-medium">{project.notes ?? "—"}</p></div>
           </div></CardContent></Card>

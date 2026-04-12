@@ -388,13 +388,13 @@ export default function AzureDeployPage() {
   const startDeploy = useCallback(async () => {
     if (!planResult || planDeployItems.length === 0) return
     const executableItems = planResult.items
-      .filter(i => i.action === "create" || i.action === "quota_risk")
-      .map(planItem => {
+      .filter((i): i is PlanResultItem & { action: "create" | "quota_risk" } =>
+        i.action === "create" || i.action === "quota_risk")
+      .flatMap((planItem) => {
         const item = planDeployItems[planItem.index]
-        if (!item) return null
-        return { ...item, action: planItem.action }
+        if (!item?.resource_group) return []
+        return [{ ...item, action: planItem.action }]
       })
-      .filter((i): i is DeployItem & { action: string } => i !== null && !!i.resource_group)
     if (executableItems.length === 0) return
 
     setDeploying(true)

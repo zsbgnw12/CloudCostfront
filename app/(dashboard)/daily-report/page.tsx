@@ -9,15 +9,27 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend,
+  BarChart, Bar,
 } from "recharts"
-import { accountsApi, type DailyReportRow, type ServiceAccount } from "@/lib/api"
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+} from "@/components/ui/table"
+import { accountsApi, type DailyReportRow, type CostSummary } from "@/lib/api"
 import { useAccounts } from "@/hooks/use-data"
 import { cn } from "@/lib/utils"
 
 const LINE_COLORS = ["#e8854a", "#5b8def", "#4ade80", "#eab308", "#d946ef", "#14b8a6", "#ef4444", "#818cf8", "#84cc16", "#38bdf8"]
+const SVC_COLORS = ["#e8854a", "#5b8def", "#4ade80", "#eab308", "#d946ef", "#14b8a6", "#ef4444", "#818cf8", "#84cc16", "#38bdf8"]
 
-function fmt(v: number) {
-  return `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+function fmtMoney(v: number, factor = 1) {
+  const x = v * factor
+  return `$${x.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
+function fmtUsage(v: number) {
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(2)}M`
+  if (v >= 1_000) return `${(v / 1_000).toFixed(1)}K`
+  return v.toFixed(2)
 }
 
 function getDefaultRange() {
@@ -38,6 +50,21 @@ export default function DailyReportPage() {
   const [groupFilter, setGroupFilter] = useState("__all__")
   const [accountFilter, setAccountFilter] = useState("__all__")
   const [loading, setLoading] = useState(false)
+  /** 草稿字符串：允许空串、中间态，避免受控 number 一删就回 0 */
+  const [discountInput, setDiscountInput] = useState("0")
+  const [costSummary, setCostSummary] = useState<CostSummary | null>(null)
+  const [costLoading, setCostLoading] = useState(false)
+
+  const discountPct = useMemo(() => {
+    const t = discountInput.trim()
+    if (t === "") return 0
+    const n = parseFloat(t)
+    if (!Number.isFinite(n)) return 0
+    return Math.min(100, Math.max(0, n))
+  }, [discountInput])
+
+  const costFactor = useMemo(() => 1 - discountPct / 100, [discountPct])
+  const formatMoney = useCallback((n: number) => fmtMoney(n, costFactor), [costFactor])
 
   const loadData = useCallback(async () => {
     try {
@@ -67,7 +94,7 @@ export default function DailyReportPage() {
     const set = new Set<string>()
     accounts
       .filter((a) => a.provider === provider)
-      .forEach((a) => set.add(a.group_label ?? "(未分组)"))
+      .forEach((a) => set.add(a.supplier_name ?? "(未分组)"))
     return Array.from(set).sort()
   }, [accounts, provider])
 
@@ -76,12 +103,44 @@ export default function DailyReportPage() {
     return accounts.filter((a) => {
       if (a.provider !== provider) return false
       if (groupFilter !== "__all__") {
-        const label = a.group_label ?? "(未分组)"
+        const label = a.supplier_name ?? "(未分组)"
         if (label !== groupFilter) return false
       }
       return true
     })
   }, [accounts, provider, groupFilter])
+
+  /** 与上方筛选完全一致：单选服务账号则用该账号；「全部账号」则用当前列表第一个（随分组/云厂商变） */
+  const costTargetAccountId = useMemo((): number | null => {
+    if (filteredAccounts.length === 0) return null
+    if (accountFilter !== "__all__") {
+      const id = Number(accountFilter)
+      return filteredAccounts.some((a) => a.id === id) ? id : null
+    }
+    return filteredAccounts[0]!.id
+  }, [filteredAccounts, accountFilter])
+
+  useEffect(() => {
+    if (costTargetAccountId == null) {
+      setCostSummary(null)
+      return
+    }
+    let cancelled = false
+    ;(async () => {
+      setCostLoading(true)
+      try {
+        const data = await accountsApi.costs(costTargetAccountId, dateRange.start, dateRange.end)
+        if (!cancelled) setCostSummary(data)
+      } catch {
+        if (!cancelled) setCostSummary(null)
+      } finally {
+        if (!cancelled) setCostLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [costTargetAccountId, dateRange.start, dateRange.end])
 
   // Filter rows by group + account
   const filteredRows = useMemo(() => {
@@ -121,7 +180,7 @@ export default function DailyReportPage() {
     const groupMap = new Map<string, AcctRow[]>()
     for (const a of filteredAccounts) {
       if (accountFilter !== "__all__" && String(a.id) !== accountFilter) continue
-      const label = a.group_label ?? "(未分组)"
+      const label = a.supplier_name ?? "(未分组)"
       if (!groupMap.has(label)) groupMap.set(label, [])
       const dailyCosts = acctMap.get(a.id) ?? new Map()
       const total = Array.from(dailyCosts.values()).reduce((s, v) => s + v, 0)
@@ -155,22 +214,50 @@ export default function DailyReportPage() {
     return { dates, groups: groupList, dateTotals, grandTotal }
   }, [filteredRows, filteredAccounts, accountFilter])
 
-  // Line chart: daily total per account
+  // Line chart: daily total per account（金额 × 折扣系数，仅展示）
   const lineChartData = useMemo(() => {
     if (pivot.dates.length === 0) return { data: [], accountNames: [] }
     const allAccounts = pivot.groups.flatMap((g) => g.accounts)
     const accountNames = allAccounts.map((a) => a.name)
+    const f = costFactor
     const data = pivot.dates.map((d) => {
       const row: Record<string, unknown> = { date: d.slice(5) }
       for (const a of allAccounts) {
-        row[a.name] = a.dailyCosts.get(d) ?? 0
+        row[a.name] = ((a.dailyCosts.get(d) ?? 0) * f)
       }
-      // total
-      row["合计"] = pivot.dateTotals.get(d) ?? 0
+      row["合计"] = (pivot.dateTotals.get(d) ?? 0) * f
       return row
     })
     return { data, accountNames }
-  }, [pivot])
+  }, [pivot, costFactor])
+
+  /** 单账号：每日服务堆叠柱（来自计费汇总 API，与旧「计费」页一致） */
+  const stackedByService = useMemo(() => {
+    if (!costSummary) return { data: [] as Record<string, unknown>[], serviceNames: [] as string[] }
+    const topN = 8
+    const topServices = costSummary.services.slice(0, topN).map((s) => s.service)
+    const topSet = new Set(topServices)
+    const dateMap = new Map<string, Record<string, number>>()
+    for (const r of costSummary.daily_by_service) {
+      if (!dateMap.has(r.date)) dateMap.set(r.date, {})
+      const m = dateMap.get(r.date)!
+      const key = topSet.has(r.service) ? r.service : "其他"
+      m[key] = (m[key] ?? 0) + r.cost
+    }
+    const serviceNames = [...topServices]
+    const hasOther = Array.from(dateMap.values()).some((m) => m["其他"])
+    if (hasOther) serviceNames.push("其他")
+    const data = Array.from(dateMap.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, vals]) => {
+        const row: Record<string, unknown> = { date: date.slice(5) }
+        for (const name of serviceNames) {
+          row[name] = ((vals[name] ?? 0) * costFactor)
+        }
+        return row
+      })
+    return { data, serviceNames }
+  }, [costSummary, costFactor])
 
   const handleExportAll = () => {
     const url = accountsApi.dailyReportExportUrl(dateRange.start, dateRange.end, provider)
@@ -186,9 +273,9 @@ export default function DailyReportPage() {
     <div className="space-y-6 p-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-foreground">日报表</h1>
+          <h1 className="text-2xl font-semibold text-foreground">统计</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            各服务账号每日费用，支持按分组/账号筛选与导出
+            同一套筛选与查询：日报透视、费用构成与使用明细共用；「全部账号」时费用取当前列表第一个账号。
           </p>
         </div>
         <Button onClick={handleExportAll} disabled={filteredRows.length === 0 || loading} className="gap-2">
@@ -196,7 +283,7 @@ export default function DailyReportPage() {
         </Button>
       </div>
 
-      {/* Filters */}
+      {/* 筛选 */}
       <Card className="bg-card border-border">
         <CardContent className="p-4">
           <div className="flex flex-wrap items-end gap-4">
@@ -243,6 +330,28 @@ export default function DailyReportPage() {
               <Label className="text-xs">结束日期</Label>
               <Input type="date" value={dateRange.end} onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })} className="w-40" />
             </div>
+            <div className="space-y-1">
+              <Label className="text-xs">统一折扣（%）</Label>
+              <Input
+                type="text"
+                inputMode="decimal"
+                autoComplete="off"
+                placeholder="0–100"
+                className="w-28 font-mono tabular-nums"
+                value={discountInput}
+                onChange={(e) => setDiscountInput(e.target.value)}
+                onBlur={() => {
+                  setDiscountInput((prev) => {
+                    const t = prev.trim()
+                    if (t === "") return "0"
+                    const n = parseFloat(t)
+                    if (!Number.isFinite(n)) return "0"
+                    const c = Math.min(100, Math.max(0, n))
+                    return Number.isInteger(c) ? String(c) : String(Math.round(c * 100) / 100)
+                  })
+                }}
+              />
+            </div>
             <Button onClick={loadData} disabled={loading} size="sm">
               {loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}查询
             </Button>
@@ -251,19 +360,15 @@ export default function DailyReportPage() {
       </Card>
 
       {loading ? (
-        <div className="text-center py-20 text-muted-foreground">加载中...</div>
-      ) : pivot.dates.length === 0 ? (
-        <div className="flex items-center justify-center py-20 text-muted-foreground">
-          <div className="text-center"><FileSpreadsheet className="w-12 h-12 mx-auto mb-4 opacity-30" /><p>暂无数据</p></div>
-        </div>
+        <div className="text-center py-16 text-muted-foreground">加载中...</div>
       ) : (
         <>
-          {/* Summary */}
+          {/* 1 总费用 / 账号统计 */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <Card className="bg-card border-border">
               <CardContent className="p-4">
                 <p className="text-xs text-muted-foreground">总费用</p>
-                <p className="text-2xl font-semibold mt-1">{fmt(pivot.grandTotal)}</p>
+                <p className="text-2xl font-semibold mt-1">{formatMoney(pivot.grandTotal)}</p>
               </CardContent>
             </Card>
             <Card className="bg-card border-border">
@@ -280,59 +385,7 @@ export default function DailyReportPage() {
             </Card>
           </div>
 
-          {/* Pivot Table */}
-          <Card className="bg-card border-border">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium">每日服务明细（{provider.toUpperCase()}）</CardTitle>
-            </CardHeader>
-            <CardContent className="p-0">
-              <div className="overflow-auto max-h-[calc(100vh-360px)]">
-                <table className="w-full text-sm border-collapse">
-                  <thead className="sticky top-0 z-10">
-                    <tr className="bg-[#252535]">
-                      <th className="text-left px-3 py-2 font-medium text-muted-foreground whitespace-nowrap border-b border-border sticky left-0 bg-[#252535] z-20 min-w-[200px]">
-                        分组 / 账号
-                      </th>
-                      <th className="text-right px-3 py-2 font-medium text-muted-foreground whitespace-nowrap border-b border-border min-w-[100px]">
-                        合计
-                      </th>
-                      {pivot.dates.map((d) => (
-                        <th key={d} className="text-right px-3 py-2 font-medium text-muted-foreground whitespace-nowrap border-b border-border min-w-[95px]">
-                          {d.slice(5)}
-                        </th>
-                      ))}
-                      <th className="text-center px-2 py-2 font-medium text-muted-foreground border-b border-border min-w-[50px]">
-                        操作
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {pivot.groups.map((group) => (
-                      <GroupRows
-                        key={group.label}
-                        group={group}
-                        dates={pivot.dates}
-                        onExport={handleExportAccount}
-                      />
-                    ))}
-                    {/* Grand total */}
-                    <tr className="bg-primary/10 font-semibold">
-                      <td className="px-3 py-2 text-foreground border-t-2 border-border sticky left-0 bg-[#1e2a3a] z-10">合计</td>
-                      <td className="text-right px-3 py-2 text-foreground border-t-2 border-border font-mono text-xs">{fmt(pivot.grandTotal)}</td>
-                      {pivot.dates.map((d) => (
-                        <td key={d} className="text-right px-3 py-2 text-foreground border-t-2 border-border font-mono text-xs">
-                          {fmt(pivot.dateTotals.get(d) ?? 0)}
-                        </td>
-                      ))}
-                      <td className="border-t-2 border-border" />
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Daily Cost Line Chart */}
+          {/* 2 每日费用趋势 */}
           <Card className="bg-card border-border">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium">每日费用趋势（{provider.toUpperCase()}）</CardTitle>
@@ -349,7 +402,7 @@ export default function DailyReportPage() {
                       <YAxis stroke="#a1a1aa" fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v) => `$${v}`} />
                       <Tooltip
                         contentStyle={{ backgroundColor: "#1e1e2e", border: "1px solid #3a3a4a", borderRadius: "8px", color: "#e5e5e5" }}
-                        formatter={(v: number, name: string) => [fmt(v), name]}
+                        formatter={(v: number, name: string) => [fmtMoney(v, 1), name]}
                         labelFormatter={(l) => `日期: ${l}`}
                       />
                       <Legend wrapperStyle={{ color: "#a1a1aa", fontSize: 11 }} />
@@ -380,8 +433,184 @@ export default function DailyReportPage() {
               </div>
             </CardContent>
           </Card>
+
+          {/* 3 每日费用明细（按日透视） */}
+          <Card className="bg-card border-border">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium">每日费用明细（{provider.toUpperCase()}）</CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              {pivot.dates.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-16 text-muted-foreground text-sm px-4">
+                  <FileSpreadsheet className="w-10 h-10 mb-3 opacity-30" />
+                  <p>暂无日报数据</p>
+                </div>
+              ) : (
+                <div className="overflow-auto max-h-[calc(100vh-360px)]">
+                  <table className="w-full text-sm border-collapse">
+                    <thead className="sticky top-0 z-10">
+                      <tr className="bg-[#252535]">
+                        <th className="text-left px-3 py-2 font-medium text-muted-foreground whitespace-nowrap border-b border-border sticky left-0 bg-[#252535] z-20 min-w-[200px]">
+                          分组 / 账号
+                        </th>
+                        <th className="text-right px-3 py-2 font-medium text-muted-foreground whitespace-nowrap border-b border-border min-w-[100px]">
+                          合计
+                        </th>
+                        {pivot.dates.map((d) => (
+                          <th key={d} className="text-right px-3 py-2 font-medium text-muted-foreground whitespace-nowrap border-b border-border min-w-[95px]">
+                            {d.slice(5)}
+                          </th>
+                        ))}
+                        <th className="text-center px-2 py-2 font-medium text-muted-foreground border-b border-border min-w-[50px]">
+                          操作
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pivot.groups.map((group) => (
+                        <GroupRows
+                          key={group.label}
+                          group={group}
+                          dates={pivot.dates}
+                          formatMoney={formatMoney}
+                          onExport={handleExportAccount}
+                        />
+                      ))}
+                      <tr className="bg-primary/10 font-semibold">
+                        <td className="px-3 py-2 text-foreground border-t-2 border-border sticky left-0 bg-[#1e2a3a] z-10">合计</td>
+                        <td className="text-right px-3 py-2 text-foreground border-t-2 border-border font-mono text-xs">{formatMoney(pivot.grandTotal)}</td>
+                        {pivot.dates.map((d) => (
+                          <td key={d} className="text-right px-3 py-2 text-foreground border-t-2 border-border font-mono text-xs">
+                            {formatMoney(pivot.dateTotals.get(d) ?? 0)}
+                          </td>
+                        ))}
+                        <td className="border-t-2 border-border" />
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </>
       )}
+
+      {/* 4 每日服务费用构成 */}
+      <Card className="bg-card border-border">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium">每日服务费用构成</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {costTargetAccountId == null || costLoading ? (
+            <div className="flex h-[280px] items-center justify-center text-muted-foreground text-sm rounded-md border border-dashed border-border">
+              {costTargetAccountId == null ? "当前筛选下无账号" : "加载中…"}
+            </div>
+          ) : costSummary ? (
+            <div className="h-[300px] w-full">
+              {stackedByService.data.length === 0 ? (
+                <div className="flex h-full items-center justify-center text-muted-foreground text-sm">暂无数据</div>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={stackedByService.data}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#3a3a4a" vertical={false} />
+                    <XAxis dataKey="date" stroke="#a1a1aa" fontSize={11} tickLine={false} axisLine={false} />
+                    <YAxis stroke="#a1a1aa" fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v) => `$${v}`} />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: "#1e1e2e", border: "1px solid #3a3a4a", borderRadius: "8px", color: "#e5e5e5" }}
+                      formatter={(v: number, name: string) => [fmtMoney(v, 1), name]}
+                      labelFormatter={(l) => `日期: ${l}`}
+                    />
+                    <Legend wrapperStyle={{ color: "#a1a1aa", fontSize: 11 }} />
+                    {stackedByService.serviceNames.map((name, i) => (
+                      <Bar key={name} dataKey={name} stackId="svc" fill={SVC_COLORS[i % SVC_COLORS.length]} />
+                    ))}
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          ) : (
+            <div className="flex h-[280px] items-center justify-center text-muted-foreground text-sm rounded-md border border-dashed border-border">
+              暂无费用数据
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* 5 服务使用明细 */}
+      <Card className="bg-card border-border">
+        <CardHeader className="pb-2 flex flex-row flex-wrap items-center justify-between gap-3">
+          <CardTitle className="text-sm font-medium">服务使用明细</CardTitle>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1 shrink-0"
+            disabled={costTargetAccountId == null || !costSummary}
+            onClick={() => {
+              if (costTargetAccountId == null) return
+              const url = accountsApi.costsExportUrl(costTargetAccountId, dateRange.start, dateRange.end)
+              window.open(url, "_blank")
+            }}
+          >
+            <Download className="w-3.5 h-3.5" />
+            导出 Excel
+          </Button>
+        </CardHeader>
+        <CardContent className="p-0 sm:p-6 pt-0">
+          {costTargetAccountId == null || costLoading ? (
+            <div className="py-12 text-center text-muted-foreground text-sm rounded-md border border-dashed border-border mx-4 sm:mx-0 mb-4">
+              {costTargetAccountId == null ? "当前筛选下无账号" : "加载中…"}
+            </div>
+          ) : costSummary ? (
+            <div className="rounded-md border border-border overflow-hidden mx-4 sm:mx-0 mb-4 sm:mb-0">
+              <Table>
+                <TableHeader>
+                  <TableRow className="border-border hover:bg-transparent bg-muted/20">
+                    <TableHead>服务名称</TableHead>
+                    <TableHead className="text-right">费用 (USD)</TableHead>
+                    <TableHead className="text-right">用量</TableHead>
+                    <TableHead>单位</TableHead>
+                    <TableHead className="text-right">占比</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {costSummary.services.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={5} className="text-center text-muted-foreground py-10">
+                        暂无数据
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    costSummary.services.map((s, i) => (
+                      <TableRow key={s.service} className="border-border">
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: SVC_COLORS[i % SVC_COLORS.length] }} />
+                            <span className="font-medium text-foreground">{s.service}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-right font-mono">{formatMoney(s.cost)}</TableCell>
+                        <TableCell className="text-right font-mono text-muted-foreground">
+                          {s.usage_quantity > 0 ? fmtUsage(s.usage_quantity) : "—"}
+                        </TableCell>
+                        <TableCell className="text-muted-foreground text-xs">{s.usage_unit || "—"}</TableCell>
+                        <TableCell className="text-right text-muted-foreground">
+                          {costSummary.total_cost > 0
+                            ? `${((s.cost / costSummary.total_cost) * 100).toFixed(1)}%`
+                            : "—"}
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          ) : (
+            <div className="py-12 text-center text-muted-foreground text-sm rounded-md border border-dashed border-border mx-4 sm:mx-0 mb-4">
+              暂无费用数据
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   )
 }
@@ -390,10 +619,12 @@ export default function DailyReportPage() {
 function GroupRows({
   group,
   dates,
+  formatMoney,
   onExport,
 }: {
   group: { label: string; accounts: { id: number; name: string; extId: string; dailyCosts: Map<string, number>; total: number }[]; total: number }
   dates: string[]
+  formatMoney: (n: number) => string
   onExport: (id: number) => void
 }) {
   return (
@@ -404,13 +635,13 @@ function GroupRows({
           📁 {group.label}
         </td>
         <td className="text-right px-3 py-1.5 font-semibold text-foreground border-b border-border font-mono text-xs">
-          {fmt(group.total)}
+          {formatMoney(group.total)}
         </td>
         {dates.map((d) => {
           const dayTotal = group.accounts.reduce((s, a) => s + (a.dailyCosts.get(d) ?? 0), 0)
           return (
             <td key={d} className="text-right px-3 py-1.5 font-semibold text-foreground border-b border-border font-mono text-xs">
-              {dayTotal > 0 ? fmt(dayTotal) : "—"}
+              {dayTotal > 0 ? formatMoney(dayTotal) : "—"}
             </td>
           )
         })}
@@ -427,7 +658,7 @@ function GroupRows({
             </div>
           </td>
           <td className="text-right px-3 py-1.5 border-b border-border font-mono text-xs text-foreground font-medium">
-            {fmt(acct.total)}
+            {formatMoney(acct.total)}
           </td>
           {dates.map((d) => {
             const cost = acct.dailyCosts.get(d) ?? 0
@@ -436,7 +667,7 @@ function GroupRows({
                 "text-right px-3 py-1.5 border-b border-border font-mono text-xs",
                 cost > 0 ? "text-foreground" : "text-muted-foreground/40"
               )}>
-                {cost > 0 ? fmt(cost) : "—"}
+                {cost > 0 ? formatMoney(cost) : "—"}
               </td>
             )
           })}

@@ -7,12 +7,12 @@ import {
   Cloud,
   Building2,
   Package,
-  BarChart3,
   ChevronLeft,
   ChevronRight,
   Activity,
   TrendingUp,
   Sparkles,
+  Bell,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -23,9 +23,9 @@ const navigation = [
   { name: "供应商管理", href: "/suppliers", icon: Building2 },
   { name: "货源管理", href: "/accounts", icon: Package },
   { name: "模型管理", href: "/azure-deploy", icon: Sparkles },
-  { name: "计费", href: "/costs", icon: BarChart3 },
   { name: "计量", href: "/metering", icon: Activity },
   { name: "统计", href: "/daily-report", icon: TrendingUp },
+  { name: "告警", href: "/alerts", icon: Bell },
 ]
 
 export function Sidebar() {

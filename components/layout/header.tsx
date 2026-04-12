@@ -4,6 +4,22 @@ import { useState, useEffect, useCallback } from "react"
 import { Search, Bell, RefreshCw, Check, AlertTriangle, X, Info, Loader2, ChevronDown } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -20,6 +36,15 @@ import { useUnreadCount, useNotifications } from "@/hooks/use-data"
 interface SyncStatus {
   status: "idle" | "syncing" | "success" | "error"
   lastSync?: string
+}
+
+function monthStr(d: Date) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`
+}
+
+/** Compare YYYY-MM strings (same year range). */
+function monthNotAfter(a: string, b: string) {
+  return a <= b
 }
 
 export function Header() {
@@ -65,15 +90,11 @@ export function Header() {
     } catch (e) { console.error(e) }
   }
 
-  const handleSync = async () => {
-    const now = new Date()
-    const year = now.getFullYear()
-    const month = now.getMonth() + 1
-    const startMonth = `${year}-${String(month).padStart(2, "0")}`
-    const endMonth = startMonth
+  const runSync = async (startMonth: string, endMonth: string, provider?: string) => {
     try {
       setSyncStatus({ status: "syncing" })
-      await syncApi.triggerAll(startMonth, endMonth)
+      await syncApi.triggerAll(startMonth, endMonth, provider)
+      await loadLastSync()
       setSyncStatus({ status: "success", lastSync: new Date().toISOString() })
       setTimeout(() => {
         setSyncStatus((prev) => ({ ...prev, status: "idle" }))
@@ -85,6 +106,28 @@ export function Header() {
         setSyncStatus((prev) => ({ ...prev, status: "idle" }))
       }, 3000)
     }
+  }
+
+  const handleSync = async () => {
+    const m = monthStr(new Date())
+    await runSync(m, m)
+  }
+
+  const [customSyncOpen, setCustomSyncOpen] = useState(false)
+  const [customStart, setCustomStart] = useState(() => monthStr(new Date()))
+  const [customEnd, setCustomEnd] = useState(() => monthStr(new Date()))
+  const [customProvider, setCustomProvider] = useState<string>("__all__")
+
+  const handleCustomSyncSubmit = async () => {
+    let start = customStart
+    let end = customEnd
+    if (!monthNotAfter(start, end)) {
+      ;[start, end] = [end, start]
+    }
+    setCustomSyncOpen(false)
+    const prov =
+      customProvider === "__all__" || !customProvider ? undefined : customProvider
+    await runSync(start, end, prov)
   }
 
   const [discoverLoading, setDiscoverLoading] = useState(false)
@@ -158,10 +201,23 @@ export function Header() {
               <ChevronDown className="w-3 h-3 ml-1" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-52">
+          <DropdownMenuContent align="end" className="w-56">
             <DropdownMenuItem onClick={handleSync} disabled={syncStatus.status === "syncing"}>
               <RefreshCw className={cn("w-4 h-4 mr-2", syncStatus.status === "syncing" && "animate-spin")} />
-              同步数据
+              同步当月数据
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => {
+                const n = monthStr(new Date())
+                setCustomStart(n)
+                setCustomEnd(n)
+                setCustomProvider("__all__")
+                setCustomSyncOpen(true)
+              }}
+              disabled={syncStatus.status === "syncing"}
+            >
+              <RefreshCw className="w-4 h-4 mr-2" />
+              自定义月份范围…
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={handleDiscoverGcp} disabled={discoverLoading}>
@@ -170,6 +226,72 @@ export function Header() {
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+
+        <Dialog open={customSyncOpen} onOpenChange={setCustomSyncOpen}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>自定义同步月份</DialogTitle>
+              <DialogDescription>
+                按自然月拉取账单（与后端 Celery 任务一致）。起止可跨多个月，用于补历史数据；数据量大时耗时较长。
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4 py-2">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label className="text-xs">开始月份</Label>
+                  <Input
+                    type="month"
+                    value={customStart}
+                    onChange={(e) => setCustomStart(e.target.value)}
+                    className="font-mono text-sm"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-xs">结束月份</Label>
+                  <Input
+                    type="month"
+                    value={customEnd}
+                    onChange={(e) => setCustomEnd(e.target.value)}
+                    className="font-mono text-sm"
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label className="text-xs">云厂商（可选）</Label>
+                <Select value={customProvider} onValueChange={setCustomProvider}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="全部" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__all__">全部（AWS / GCP / Azure）</SelectItem>
+                    <SelectItem value="aws">仅 AWS</SelectItem>
+                    <SelectItem value="gcp">仅 GCP</SelectItem>
+                    <SelectItem value="azure">仅 Azure</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button type="button" variant="outline" onClick={() => setCustomSyncOpen(false)}>
+                取消
+              </Button>
+              <Button
+                type="button"
+                onClick={handleCustomSyncSubmit}
+                disabled={syncStatus.status === "syncing" || !customStart || !customEnd}
+              >
+                {syncStatus.status === "syncing" ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    同步中…
+                  </>
+                ) : (
+                  "开始同步"
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {/* Notifications */}
         <DropdownMenu>

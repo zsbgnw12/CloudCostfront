@@ -1,11 +1,12 @@
 import useSWR from "swr"
 import {
   accountsApi,
+  suppliersApi,
   dashboardApi,
   alertsApi,
   meteringApi,
   type ServiceAccount,
-  type GroupItem,
+  type SupplySourceItem,
   type DashboardBundle,
   type MeteringUsageSummary,
   type MeteringDailyUsage,
@@ -25,8 +26,9 @@ export function useAccounts(params?: { provider?: string; status?: string }) {
   })
 }
 
-export function useGroups() {
-  return useSWR<GroupItem[]>("groups", () => accountsApi.listGroups(), {
+/** 全部货源（含供应商名、云类型），用于树与筛选 */
+export function useSupplySourcesAll() {
+  return useSWR<SupplySourceItem[]>("supply-sources-all", () => suppliersApi.listAllSupplySources(), {
     dedupingInterval: 60000,
   })
 }
@@ -58,10 +60,10 @@ export function useNotifications(limit = 10) {
   })
 }
 
-// ─── Metering (billing_data) ─────────────────────────────────
+// ─── Metering（billing_data，与 /api/metering 一致）────────────────
 
 function meterKey(base: string, f?: MeteringFilters) {
-  return `${base}:${f?.date_start ?? ""}:${f?.date_end ?? ""}:${f?.provider ?? ""}:${f?.product ?? ""}`
+  return `${base}:${f?.date_start ?? ""}:${f?.date_end ?? ""}:${f?.provider ?? ""}:${f?.product ?? ""}:${f?.account_id ?? ""}:${f?.supplier_name ?? ""}:${f?.data_source_id ?? ""}`
 }
 
 export function useMeteringSummary(filters?: MeteringFilters) {
@@ -72,21 +74,31 @@ export function useMeteringDaily(filters?: MeteringFilters) {
   return useSWR<MeteringDailyUsage[]>(meterKey("meter-daily", filters), () => meteringApi.daily(filters))
 }
 
+/** 按服务(product)聚合用量 — 计量页主用 */
 export function useMeteringByService(filters?: MeteringFilters) {
   return useSWR<MeteringServiceUsage[]>(meterKey("meter-bysvc", filters), () => meteringApi.byService(filters))
 }
 
-export function useMeteringProducts(provider?: string) {
-  return useSWR<MeteringProductOption[]>(`meter-products:${provider ?? ""}`, () => meteringApi.products(provider))
+/** 服务下拉选项（可带与列表相同的渠道/货源/账号筛选） */
+export function useMeteringProducts(provider?: string, scope?: Pick<MeteringFilters, "account_id" | "supplier_name" | "data_source_id">) {
+  const sk = scope ? `${scope.account_id ?? ""}:${scope.supplier_name ?? ""}:${scope.data_source_id ?? ""}` : ""
+  return useSWR<MeteringProductOption[]>(
+    `meter-products:${provider ?? ""}:${sk}`,
+    () => meteringApi.products(provider, scope),
+  )
 }
 
 export function useMeteringDetail(
   filters?: MeteringFilters & { page?: number; page_size?: number },
 ) {
-  const key = `meter-detail:${filters?.date_start ?? ""}:${filters?.date_end ?? ""}:${filters?.provider ?? ""}:${filters?.product ?? ""}:${filters?.page ?? 1}:${filters?.page_size ?? 50}`
+  const key = `meter-detail:${filters?.date_start ?? ""}:${filters?.date_end ?? ""}:${filters?.provider ?? ""}:${filters?.product ?? ""}:${filters?.account_id ?? ""}:${filters?.supplier_name ?? ""}:${filters?.data_source_id ?? ""}:${filters?.page ?? 1}:${filters?.page_size ?? 50}`
   return useSWR<MeteringUsageDetail[]>(key, () => meteringApi.detail(filters))
 }
 
 export function useMeteringDetailCount(filters?: MeteringFilters) {
   return useSWR<{ total: number }>(meterKey("meter-count", filters), () => meteringApi.detailCount(filters))
 }
+
+// 旧名/缓存页面若仍引用下列名字，与上面为同一实现（数据均为 billing_data 按服务聚合）
+export const useMeteringByModel = useMeteringByService
+export const useMeteringModels = useMeteringProducts

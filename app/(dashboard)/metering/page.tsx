@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo } from "react"
+import { useState, useMemo, useEffect } from "react"
 import { format, subDays, startOfMonth } from "date-fns"
 import {
   Activity, Download, ChevronLeft, ChevronRight,
@@ -22,10 +22,11 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { meteringApi } from "@/lib/api"
+import { meteringApi, dataSourcesApi, type DataSourceRow } from "@/lib/api"
 import {
   useMeteringSummary, useMeteringDaily, useMeteringByService,
   useMeteringProducts, useMeteringDetail, useMeteringDetailCount,
+  useAccounts,
 } from "@/hooks/use-data"
 import { cn } from "@/lib/utils"
 
@@ -55,24 +56,72 @@ function fmtCost(n: unknown): string {
 
 export default function MeteringPage() {
   const today = new Date()
+  const { data: accounts = [] } = useAccounts()
+  const [dataSources, setDataSources] = useState<DataSourceRow[]>([])
   const [dateStart, setDateStart] = useState(format(startOfMonth(today), "yyyy-MM-dd"))
   const [dateEnd, setDateEnd] = useState(format(today, "yyyy-MM-dd"))
   const [provider, setProvider] = useState<string>("")
+  const [groupLabel, setGroupLabel] = useState<string>("__all__")
+  const [dataSourceId, setDataSourceId] = useState<string>("__all__")
+  const [accountId, setAccountId] = useState<string>("__all__")
   const [product, setProduct] = useState<string>("")
   const [page, setPage] = useState(1)
   const pageSize = 20
+
+  useEffect(() => {
+    dataSourcesApi.list().then(setDataSources).catch(() => setDataSources([]))
+  }, [])
+
+  const channelOptions = useMemo(() => {
+    const accs = provider ? accounts.filter((a) => a.provider === provider) : accounts
+    const set = new Set<string>()
+    accs.forEach((a) => set.add(a.supplier_name ?? "(未分组)"))
+    return Array.from(set).sort()
+  }, [accounts, provider])
+
+  const visibleDataSources = useMemo(() => {
+    const active = dataSources.filter((d) => d.is_active)
+    if (!provider) return active
+    const allowed = new Set(accounts.filter((a) => a.provider === provider).map((a) => a.id))
+    return active.filter((d) => allowed.has(d.cloud_account_id))
+  }, [dataSources, accounts, provider])
+
+  const filteredAccounts = useMemo(() => {
+    return accounts.filter((a) => {
+      if (provider && a.provider !== provider) return false
+      if (groupLabel !== "__all__") {
+        const label = a.supplier_name ?? "(未分组)"
+        if (label !== groupLabel) return false
+      }
+      if (dataSourceId !== "__all__") {
+        const ds = dataSources.find((d) => d.id === Number(dataSourceId))
+        if (ds && ds.cloud_account_id !== a.id) return false
+      }
+      return true
+    })
+  }, [accounts, provider, groupLabel, dataSourceId, dataSources])
+
+  const scopeExtra = useMemo(
+    () => ({
+      account_id: accountId !== "__all__" ? Number(accountId) : undefined,
+      supplier_name: groupLabel !== "__all__" ? groupLabel : undefined,
+      data_source_id: dataSourceId !== "__all__" ? Number(dataSourceId) : undefined,
+    }),
+    [accountId, groupLabel, dataSourceId],
+  )
 
   const filters = useMemo(() => ({
     date_start: dateStart || undefined,
     date_end: dateEnd || undefined,
     provider: provider || undefined,
     product: product || undefined,
-  }), [dateStart, dateEnd, provider, product])
+    ...scopeExtra,
+  }), [dateStart, dateEnd, provider, product, scopeExtra])
 
   const { data: summary, isLoading: summaryLoading } = useMeteringSummary(filters)
   const { data: daily = [] } = useMeteringDaily(filters)
   const { data: byService = [] } = useMeteringByService(filters)
-  const { data: products = [] } = useMeteringProducts(provider || undefined)
+  const { data: products = [] } = useMeteringProducts(provider || undefined, scopeExtra)
   const { data: detail = [] } = useMeteringDetail({ ...filters, page, page_size: pageSize })
   const { data: countData } = useMeteringDetailCount(filters)
   const totalCount = countData?.total ?? 0
@@ -142,13 +191,72 @@ export default function MeteringPage() {
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">供应商</Label>
-              <Select value={provider} onValueChange={(v) => { setProvider(v === "all" ? "" : v); setProduct(""); setPage(1) }}>
+              <Select value={provider} onValueChange={(v) => {
+                setProvider(v === "all" ? "" : v)
+                setProduct("")
+                setGroupLabel("__all__")
+                setDataSourceId("__all__")
+                setAccountId("__all__")
+                setPage(1)
+              }}>
                 <SelectTrigger className="h-8 w-28 text-sm"><SelectValue placeholder="全部" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">全部</SelectItem>
                   <SelectItem value="aws">AWS</SelectItem>
                   <SelectItem value="gcp">GCP</SelectItem>
                   <SelectItem value="azure">Azure</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">渠道</Label>
+              <Select value={groupLabel} onValueChange={(v) => {
+                setGroupLabel(v)
+                setAccountId("__all__")
+                setProduct("")
+                setPage(1)
+              }}>
+                <SelectTrigger className="h-8 w-40 text-sm"><SelectValue placeholder="全部" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">全部渠道</SelectItem>
+                  {channelOptions.map((g) => (
+                    <SelectItem key={g} value={g}>{g}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">货源</Label>
+              <Select value={dataSourceId} onValueChange={(v) => {
+                setDataSourceId(v)
+                setAccountId("__all__")
+                setProduct("")
+                setPage(1)
+              }}>
+                <SelectTrigger className="h-8 w-44 text-sm"><SelectValue placeholder="全部" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">全部货源</SelectItem>
+                  {visibleDataSources.map((ds) => (
+                    <SelectItem key={ds.id} value={String(ds.id)}>
+                      {`${ds.name} (#${ds.id})`}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5 min-w-[220px]">
+              <Label className="text-xs">服务账号</Label>
+              <Select value={accountId} onValueChange={(v) => { setAccountId(v); setProduct(""); setPage(1) }}>
+                <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="全部账号" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">全部账号</SelectItem>
+                  {filteredAccounts.map((a) => (
+                    <SelectItem key={a.id} value={String(a.id)}>
+                      <span className="text-[10px] text-muted-foreground mr-1">{a.provider.toUpperCase()}</span>
+                      {a.name}
+                      <span className="text-muted-foreground text-xs ml-1">({a.external_project_id})</span>
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>

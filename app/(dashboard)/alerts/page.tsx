@@ -13,8 +13,8 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { alertsApi, accountsApi, type AlertRule, type AlertHistory, type ServiceAccount, type RuleStatus, type GroupItem } from "@/lib/api"
-import { useAccounts, useGroups } from "@/hooks/use-data"
+import { alertsApi, accountsApi, type AlertRule, type AlertHistory, type ServiceAccount, type RuleStatus } from "@/lib/api"
+import { useAccounts } from "@/hooks/use-data"
 
 const THRESHOLD_LABELS: Record<string, string> = {
   daily_absolute: "日费用超限",
@@ -29,7 +29,6 @@ export default function AlertsPage() {
   const [rules, setRules] = useState<AlertRule[]>([])
   const [history, setHistory] = useState<AlertHistory[]>([])
   const { data: accounts = [] } = useAccounts()
-  const { data: groups = [] } = useGroups()
   const [ruleStatusData, setRuleStatusData] = useState<RuleStatus[]>([])
   const [loading, setLoading] = useState(true)
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -57,16 +56,15 @@ export default function AlertsPage() {
   const formGroups = useMemo(() => {
     if (!form.provider) return []
     const set = new Set<string>()
-    accounts.filter((a) => a.provider === form.provider).forEach((a) => set.add(a.group_label ?? "(未分组)"))
-    groups.filter((g) => g.provider === form.provider).forEach((g) => set.add(g.label))
+    accounts.filter((a) => a.provider === form.provider).forEach((a) => set.add(a.supplier_name ?? "(未分组)"))
     return Array.from(set).sort()
-  }, [accounts, groups, form.provider])
+  }, [accounts, form.provider])
   const formAccounts = useMemo(() => {
     if (!form.provider) return []
     return accounts.filter((a) => {
       if (a.provider !== form.provider) return false
       if (form.group) {
-        const label = a.group_label ?? "(未分组)"
+        const label = a.supplier_name ?? "(未分组)"
         if (label !== form.group) return false
       }
       return true

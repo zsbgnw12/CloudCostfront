@@ -1,12 +1,25 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000"
+/**
+ * - 开发环境默认走相对路径 `/api/...`，由 next.config 的 rewrites 转发到后端，避免直连 :8000 时的 Failed to fetch（未启动/CORS/IPv6 等）。
+ * - 生产静态导出请在构建环境设置 NEXT_PUBLIC_API_BASE 指向真实 API（见 .env.production）。
+ * - 若仍要开发时直连后端，可设 NEXT_PUBLIC_API_BASE=http://127.0.0.1:8000
+ */
+function getApiBase(): string {
+  const v = process.env.NEXT_PUBLIC_API_BASE
+  if (v !== undefined && v !== "") return v.replace(/\/$/, "")
+  if (process.env.NODE_ENV === "development") return ""
+  return "http://127.0.0.1:8000"
+}
+
+const API_BASE = getApiBase()
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), 30000) // 30s timeout
 
   const { headers: extraHeaders, ...restInit } = init ?? {}
+  const url = path.startsWith("http") ? path : `${API_BASE}${path}`
   try {
-    const res = await fetch(`${API_BASE}${path}`, {
+    const res = await fetch(url, {
       ...restInit,
       headers: {
         "Content-Type": "application/json",
@@ -30,17 +43,26 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export interface ServiceAccount {
   id: number
   name: string
+  supply_source_id: number
+  supplier_name: string
   provider: string
-  group_label: string | null
   external_project_id: string
   status: string
   created_at: string
 }
 
-export interface GroupItem {
+/** 货源（供应商 + 云），来自 /api/suppliers/supply-sources/all */
+export interface SupplySourceItem {
+  id: number
+  supplier_id: number
+  supplier_name: string | null
   provider: string
-  label: string
-  count: number
+  account_count: number
+}
+
+export interface SupplierRow {
+  id: number
+  name: string
 }
 
 export interface HistoryItem {
@@ -54,6 +76,7 @@ export interface HistoryItem {
 }
 
 export interface ServiceAccountDetail extends ServiceAccount {
+  supplier_id: number
   notes: string | null
   secret_fields: string[]
   history: HistoryItem[]
@@ -201,12 +224,12 @@ export const accountsApi = {
     if (params?.provider) qs.set("provider", params.provider)
     if (params?.status) qs.set("status", params.status)
     const q = qs.toString()
-    return request<ServiceAccount[]>(`/api/service-accounts/${q ? `?${q}` : ""}`)
+    return request<ServiceAccount[]>(`/api/service-accounts${q ? `?${q}` : ""}`)
   },
   get: (id: number) => request<ServiceAccountDetail>(`/api/service-accounts/${id}`),
-  create: (data: { name: string; provider: string; group_label?: string; external_project_id: string; secret_data?: Record<string, unknown>; notes?: string }) =>
+  create: (data: { supply_source_id: number; name: string; external_project_id: string; secret_data?: Record<string, unknown>; notes?: string }) =>
     request<ServiceAccount>("/api/service-accounts/", { method: "POST", body: JSON.stringify(data) }),
-  update: (id: number, data: { name?: string; group_label?: string; external_project_id?: string; secret_data?: Record<string, unknown>; notes?: string }) =>
+  update: (id: number, data: { name?: string; supply_source_id?: number; external_project_id?: string; secret_data?: Record<string, unknown>; notes?: string }) =>
     request<ServiceAccountDetail>(`/api/service-accounts/${id}`, { method: "PUT", body: JSON.stringify(data) }),
   suspend: (id: number) =>
     request<ServiceAccountDetail>(`/api/service-accounts/${id}/suspend`, { method: "POST" }),
@@ -216,15 +239,6 @@ export const accountsApi = {
     request<void>(`/api/service-accounts/${id}`, { method: "DELETE" }),
   hardDelete: (id: number) =>
     request<void>(`/api/service-accounts/hard/${id}`, { method: "DELETE" }),
-  renameGroup: (provider: string, old_label: string, new_label: string) =>
-    request<{ updated: number }>("/api/service-accounts/groups/rename", {
-      method: "PUT", body: JSON.stringify({ provider, old_label, new_label }),
-    }),
-  listGroups: () => request<GroupItem[]>("/api/service-accounts/groups"),
-  createGroup: (provider: string, label: string) =>
-    request<GroupItem>("/api/service-accounts/groups", { method: "POST", body: JSON.stringify({ provider, label }) }),
-  deleteGroup: (provider: string, label: string) =>
-    request<void>(`/api/service-accounts/groups?provider=${encodeURIComponent(provider)}&label=${encodeURIComponent(label)}`, { method: "DELETE" }),
   costs: (id: number, start_date: string, end_date: string) =>
     request<CostSummary>(`/api/service-accounts/${id}/costs?start_date=${start_date}&end_date=${end_date}`),
   costsExportUrl: (id: number, start_date: string, end_date: string) =>
@@ -243,6 +257,30 @@ export const accountsApi = {
   },
   discoverGcpProjects: () =>
     request<{ created: number; projects: string[] }>("/api/service-accounts/discover-gcp-projects", { method: "POST" }),
+}
+
+// ─── Suppliers / 货源 API ───────────────────────────────────
+
+export const suppliersApi = {
+  list: () => request<SupplierRow[]>("/api/suppliers/"),
+  create: (name: string) =>
+    request<SupplierRow>("/api/suppliers/", { method: "POST", body: JSON.stringify({ name }) }),
+  update: (id: number, name: string) =>
+    request<SupplierRow>(`/api/suppliers/${id}`, { method: "PATCH", body: JSON.stringify({ name }) }),
+  remove: (id: number) => request<void>(`/api/suppliers/${id}`, { method: "DELETE" }),
+  listSupplySources: (supplierId: number) =>
+    request<SupplySourceItem[]>(`/api/suppliers/${supplierId}/supply-sources`),
+  createSupplySource: (supplierId: number, provider: string) =>
+    request<SupplySourceItem>(`/api/suppliers/${supplierId}/supply-sources`, {
+      method: "POST",
+      body: JSON.stringify({ provider }),
+    }),
+  deleteSupplySource: (supplySourceId: number) =>
+    request<void>(`/api/suppliers/supply-sources/${supplySourceId}`, { method: "DELETE" }),
+  listAllSupplySources: (supplierId?: number) => {
+    const qs = supplierId != null ? `?supplier_id=${supplierId}` : ""
+    return request<SupplySourceItem[]>(`/api/suppliers/supply-sources/all${qs}`)
+  },
 }
 
 // ─── Alerts API ───────────────────────────────────────────────
@@ -338,11 +376,12 @@ export const dashboardApi = {
 export interface Project {
   id: number
   name: string
+  supply_source_id: number
   provider: string
+  supplier_name: string
   external_project_id: string
   data_source_id: number | null
   category_id: number | null
-  group_label: string | null
   status: string
   notes: string | null
   created_at: string
@@ -383,7 +422,7 @@ export const projectsApi = {
     if (params?.status) qs.set("status", params.status)
     if (params?.provider) qs.set("provider", params.provider)
     const q = qs.toString()
-    return request<Project[]>(`/api/projects/${q ? `?${q}` : ""}`)
+    return request<Project[]>(`/api/projects${q ? `?${q}` : ""}`)
   },
   get: (id: number) => request<Project>(`/api/projects/${id}`),
   activate: (id: number) => request<Project>(`/api/projects/${id}/activate`, { method: "POST" }),
@@ -662,6 +701,12 @@ export interface MeteringFilters {
   date_end?: string
   provider?: string
   product?: string
+  /** 服务账号 Project.id */
+  account_id?: number
+  /** 供应商名称 suppliers.name */
+  supplier_name?: string
+  /** 货源 data_source id */
+  data_source_id?: number
 }
 
 function meteringQs(filters?: MeteringFilters): string {
@@ -671,8 +716,27 @@ function meteringQs(filters?: MeteringFilters): string {
   if (filters.date_end) qs.set("date_end", filters.date_end)
   if (filters.provider) qs.set("provider", filters.provider)
   if (filters.product) qs.set("product", filters.product)
+  if (filters.account_id != null) qs.set("account_id", String(filters.account_id))
+  if (filters.supplier_name) qs.set("supplier_name", filters.supplier_name)
+  if (filters.data_source_id != null) qs.set("data_source_id", String(filters.data_source_id))
   const s = qs.toString()
   return s ? `?${s}` : ""
+}
+
+export interface DataSourceRow {
+  id: number
+  name: string
+  cloud_account_id: number
+  category_id: number | null
+  config: Record<string, unknown>
+  last_sync_at: string | null
+  sync_status: string
+  is_active: boolean
+  created_at: string
+}
+
+export const dataSourcesApi = {
+  list: () => request<DataSourceRow[]>("/api/data-sources"),
 }
 
 export const meteringApi = {
@@ -685,8 +749,15 @@ export const meteringApi = {
   byService: (filters?: MeteringFilters) =>
     request<MeteringServiceUsage[]>(`/api/metering/by-service${meteringQs(filters)}`),
 
-  products: (provider?: string) =>
-    request<MeteringProductOption[]>(`/api/metering/products${provider ? `?provider=${provider}` : ""}`),
+  products: (provider?: string, extra?: Pick<MeteringFilters, "account_id" | "supplier_name" | "data_source_id">) => {
+    const qs = new URLSearchParams()
+    if (provider) qs.set("provider", provider)
+    if (extra?.account_id != null) qs.set("account_id", String(extra.account_id))
+    if (extra?.supplier_name) qs.set("supplier_name", extra.supplier_name)
+    if (extra?.data_source_id != null) qs.set("data_source_id", String(extra.data_source_id))
+    const s = qs.toString()
+    return request<MeteringProductOption[]>(`/api/metering/products${s ? `?${s}` : ""}`)
+  },
 
   detail: (filters?: MeteringFilters & { page?: number; page_size?: number }) => {
     const qs = new URLSearchParams()
@@ -694,6 +765,9 @@ export const meteringApi = {
     if (filters?.date_end) qs.set("date_end", filters.date_end)
     if (filters?.provider) qs.set("provider", filters.provider)
     if (filters?.product) qs.set("product", filters.product)
+    if (filters?.account_id != null) qs.set("account_id", String(filters.account_id))
+    if (filters?.supplier_name) qs.set("supplier_name", filters.supplier_name)
+    if (filters?.data_source_id != null) qs.set("data_source_id", String(filters.data_source_id))
     if (filters?.page) qs.set("page", String(filters.page))
     if (filters?.page_size) qs.set("page_size", String(filters.page_size))
     const s = qs.toString()
