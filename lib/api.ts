@@ -18,13 +18,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   const { headers: extraHeaders, ...restInit } = init ?? {}
   const url = path.startsWith("http") ? path : `${API_BASE}${path}`
+  const headers: Record<string, string> = {
+    ...(extraHeaders as Record<string, string>),
+  }
+  // 仅在有 body 时带 application/json，避免 GET 因非简单请求触发 CORS 预检，且勿依赖 307 重定向（跨域下不稳定）
+  if (restInit.body != null) {
+    headers["Content-Type"] = "application/json"
+  }
   try {
     const res = await fetch(url, {
       ...restInit,
-      headers: {
-        "Content-Type": "application/json",
-        ...(extraHeaders as Record<string, string>),
-      },
+      headers,
       signal: controller.signal,
     })
     if (!res.ok) {
@@ -224,7 +228,8 @@ export const accountsApi = {
     if (params?.provider) qs.set("provider", params.provider)
     if (params?.status) qs.set("status", params.status)
     const q = qs.toString()
-    return request<ServiceAccount[]>(`/api/service-accounts${q ? `?${q}` : ""}`)
+    // 与 FastAPI @router.get("/") 一致，必须带尾部斜杠，否则会 307，跨域 fetch 可能失败
+    return request<ServiceAccount[]>(q ? `/api/service-accounts/?${q}` : "/api/service-accounts/")
   },
   get: (id: number) => request<ServiceAccountDetail>(`/api/service-accounts/${id}`),
   create: (data: { supply_source_id: number; name: string; external_project_id: string; secret_data?: Record<string, unknown>; notes?: string }) =>
@@ -422,7 +427,7 @@ export const projectsApi = {
     if (params?.status) qs.set("status", params.status)
     if (params?.provider) qs.set("provider", params.provider)
     const q = qs.toString()
-    return request<Project[]>(`/api/projects${q ? `?${q}` : ""}`)
+    return request<Project[]>(q ? `/api/projects/?${q}` : "/api/projects/")
   },
   get: (id: number) => request<Project>(`/api/projects/${id}`),
   activate: (id: number) => request<Project>(`/api/projects/${id}/activate`, { method: "POST" }),
@@ -736,7 +741,7 @@ export interface DataSourceRow {
 }
 
 export const dataSourcesApi = {
-  list: () => request<DataSourceRow[]>("/api/data-sources"),
+  list: () => request<DataSourceRow[]>("/api/data-sources/"),
 }
 
 export const meteringApi = {
