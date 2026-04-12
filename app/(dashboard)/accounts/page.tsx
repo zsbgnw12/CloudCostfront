@@ -35,6 +35,14 @@ const ACTION_LABELS: Record<string, string> = {
   suspended: "停用", activated: "启用", deleted: "删除",
 }
 
+/** 与后端 suspend/activate 允许的状态一致 */
+function canSuspendStatus(s: string) {
+  return s === "active" || s === "standby"
+}
+function canActivateStatus(s: string) {
+  return s === "inactive" || s === "standby"
+}
+
 /* ─── Tree: 供应商 → 货源(云) → 账号 ───────────────────────── */
 interface SupplierTreeNode {
   supplierName: string
@@ -385,14 +393,14 @@ export default function AccountsPage() {
                 <DropdownMenuContent align="end">
                   <DropdownMenuItem onClick={openEdit} disabled={!!actionLoading}><Pencil className="w-4 h-4 mr-2" />编辑</DropdownMenuItem>
                   <DropdownMenuSeparator />
-                  {detail.status === "active" && (
-                    <DropdownMenuItem onClick={() => handleAction("suspend")} disabled={!!actionLoading}>
-                      <Pause className="w-4 h-4 mr-2" />停用
-                    </DropdownMenuItem>
-                  )}
-                  {detail.status === "inactive" && (
+                  {canActivateStatus(detail.status) && (
                     <DropdownMenuItem onClick={() => handleAction("activate")} disabled={!!actionLoading}>
                       <Play className="w-4 h-4 mr-2" />启用
+                    </DropdownMenuItem>
+                  )}
+                  {canSuspendStatus(detail.status) && (
+                    <DropdownMenuItem onClick={() => handleAction("suspend")} disabled={!!actionLoading}>
+                      <Pause className="w-4 h-4 mr-2" />停用
                     </DropdownMenuItem>
                   )}
                   <DropdownMenuSeparator />

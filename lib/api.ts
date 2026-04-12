@@ -246,8 +246,11 @@ export const accountsApi = {
     request<void>(`/api/service-accounts/hard/${id}`, { method: "DELETE" }),
   costs: (id: number, start_date: string, end_date: string) =>
     request<CostSummary>(`/api/service-accounts/${id}/costs?start_date=${start_date}&end_date=${end_date}`),
-  costsExportUrl: (id: number, start_date: string, end_date: string) =>
-    `${API_BASE}/api/service-accounts/${id}/costs/export?start_date=${start_date}&end_date=${end_date}`,
+  costsExportUrl: (id: number, start_date: string, end_date: string, discount_pct?: number) => {
+    const qs = new URLSearchParams({ start_date, end_date })
+    if (discount_pct != null && discount_pct > 0) qs.set("discount_pct", String(discount_pct))
+    return `${API_BASE}/api/service-accounts/${id}/costs/export?${qs}`
+  },
   credentials: (id: number) =>
     request<Record<string, unknown>>(`/api/service-accounts/${id}/credentials`),
   dailyReport: (start_date: string, end_date: string, provider?: string) => {
@@ -255,9 +258,10 @@ export const accountsApi = {
     if (provider) qs.set("provider", provider)
     return request<DailyReportRow[]>(`/api/service-accounts/daily-report?${qs}`)
   },
-  dailyReportExportUrl: (start_date: string, end_date: string, provider?: string) => {
+  dailyReportExportUrl: (start_date: string, end_date: string, provider?: string, discount_pct?: number) => {
     const qs = new URLSearchParams({ start_date, end_date })
     if (provider) qs.set("provider", provider)
+    if (discount_pct != null && discount_pct > 0) qs.set("discount_pct", String(discount_pct))
     return `${API_BASE}/api/service-accounts/daily-report/export?${qs}`
   },
   discoverGcpProjects: () =>

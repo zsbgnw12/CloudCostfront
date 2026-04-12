@@ -286,7 +286,12 @@ export default function DailyReportPage() {
   }, [costSummary, costFactor])
 
   const handleExportAll = () => {
-    const url = accountsApi.dailyReportExportUrl(dateRange.start, dateRange.end, providerForApi)
+    const url = accountsApi.dailyReportExportUrl(
+      dateRange.start,
+      dateRange.end,
+      providerForApi,
+      discountPct > 0 ? discountPct : undefined,
+    )
     window.open(url, "_blank")
   }
 
@@ -302,7 +307,12 @@ export default function DailyReportPage() {
   )
 
   const handleExportAccount = (accountId: number) => {
-    const url = accountsApi.costsExportUrl(accountId, dateRange.start, dateRange.end)
+    const url = accountsApi.costsExportUrl(
+      accountId,
+      dateRange.start,
+      dateRange.end,
+      discountPct > 0 ? discountPct : undefined,
+    )
     window.open(url, "_blank")
   }
 
@@ -595,7 +605,12 @@ export default function DailyReportPage() {
             disabled={costTargetAccountId == null || !costSummary}
             onClick={() => {
               if (costTargetAccountId == null) return
-              const url = accountsApi.costsExportUrl(costTargetAccountId, dateRange.start, dateRange.end)
+              const url = accountsApi.costsExportUrl(
+                costTargetAccountId,
+                dateRange.start,
+                dateRange.end,
+                discountPct > 0 ? discountPct : undefined,
+              )
               window.open(url, "_blank")
             }}
           >
