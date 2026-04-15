@@ -24,6 +24,7 @@ import {
   Cpu,
   Rocket,
   Plus,
+  FileDown,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -649,6 +650,7 @@ export default function AzureDeployPage() {
           )}
           {step === 3 && (
             <StepDeploy
+              taskId={taskId}
               progress={progress}
               deploying={deploying}
               retrying={retrying}
@@ -1380,6 +1382,7 @@ function MatrixCell({ planItem, skuCapacity }: { planItem: PlanResultItem; skuCa
 // ─── Step 4: Deploy ──────────────────────────────────────────
 
 function StepDeploy({
+  taskId,
   progress,
   deploying,
   retrying,
@@ -1387,6 +1390,7 @@ function StepDeploy({
   onRetry,
   onReset,
 }: {
+  taskId: string | null
   progress: DeployProgress | null
   deploying: boolean
   retrying: boolean
@@ -1394,6 +1398,8 @@ function StepDeploy({
   onRetry: () => void
   onReset: () => void
 }) {
+  const [exporting, setExporting] = useState(false)
+
   const total = progress?.total ?? 0
   const succeeded = progress?.succeeded ?? 0
   const failed = progress?.failed ?? 0
@@ -1405,11 +1411,39 @@ function StepDeploy({
     <div className="space-y-6">
       {/* Overall progress */}
       <div className="space-y-3">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
           <h3 className="text-lg font-semibold">
             {isCompleted ? "部署完成" : "部署进度"}
           </h3>
-          <span className="text-sm text-muted-foreground">{done}/{total} 完成</span>
+          <div className="flex items-center gap-2">
+            {taskId && (
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                className="gap-2"
+                disabled={exporting}
+                onClick={async () => {
+                  setExporting(true)
+                  try {
+                    await azureDeployApi.exportExcel(taskId)
+                  } catch {
+                    /* user sees network error in console; optional toast */
+                  } finally {
+                    setExporting(false)
+                  }
+                }}
+              >
+                {exporting ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <FileDown className="w-4 h-4" />
+                )}
+                导出 Excel
+              </Button>
+            )}
+            <span className="text-sm text-muted-foreground">{done}/{total} 完成</span>
+          </div>
         </div>
         <Progress value={pct} className="h-3" />
         <div className="flex gap-4 text-sm">

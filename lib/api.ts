@@ -52,6 +52,7 @@ export interface ServiceAccount {
   provider: string
   external_project_id: string
   status: string
+  order_method?: string | null
   created_at: string
 }
 
@@ -232,9 +233,23 @@ export const accountsApi = {
     return request<ServiceAccount[]>(q ? `/api/service-accounts/?${q}` : "/api/service-accounts/")
   },
   get: (id: number) => request<ServiceAccountDetail>(`/api/service-accounts/${id}`),
-  create: (data: { supply_source_id: number; name: string; external_project_id: string; secret_data?: Record<string, unknown>; notes?: string }) =>
+  create: (data: {
+    supply_source_id: number
+    name: string
+    external_project_id: string
+    secret_data?: Record<string, unknown>
+    notes?: string
+    order_method?: string | null
+  }) =>
     request<ServiceAccount>("/api/service-accounts/", { method: "POST", body: JSON.stringify(data) }),
-  update: (id: number, data: { name?: string; supply_source_id?: number; external_project_id?: string; secret_data?: Record<string, unknown>; notes?: string }) =>
+  update: (id: number, data: {
+    name?: string
+    supply_source_id?: number
+    external_project_id?: string
+    secret_data?: Record<string, unknown>
+    notes?: string
+    order_method?: string | null
+  }) =>
     request<ServiceAccountDetail>(`/api/service-accounts/${id}`, { method: "PUT", body: JSON.stringify(data) }),
   suspend: (id: number) =>
     request<ServiceAccountDetail>(`/api/service-accounts/${id}/suspend`, { method: "POST" }),
@@ -587,6 +602,41 @@ async function azureRequest<T>(path: string, init?: RequestInit): Promise<T> {
   })
 }
 
+/** Download Excel from GET /api/azure-deploy/export/{taskId} (blob, not JSON). */
+export async function downloadAzureDeployExcel(taskId: string): Promise<void> {
+  if (!_getAzureToken) {
+    throw new Error("Azure 未登录，请先登录 Azure 账号")
+  }
+  const token = await _getAzureToken()
+  const url = `${API_BASE}/api/azure-deploy/export/${encodeURIComponent(taskId)}`
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+  if (!res.ok) {
+    const body = await res.text().catch(() => "")
+    throw new Error(`导出失败 ${res.status}: ${body}`)
+  }
+  const blob = await res.blob()
+  const blobUrl = URL.createObjectURL(blob)
+  const a = document.createElement("a")
+  a.href = blobUrl
+  let name = `azure-deploy-${taskId}.xlsx`
+  const cd = res.headers.get("Content-Disposition")
+  if (cd) {
+    const m =
+      /filename\*=(?:UTF-8''|)([^;\n]+)|filename="([^"]+)"/i.exec(cd)
+    const raw = (m?.[1] || m?.[2] || "").trim()
+    if (raw) {
+      try {
+        name = decodeURIComponent(raw.replace(/^["']|["']$/g, ""))
+      } catch {
+        name = raw.replace(/^["']|["']$/g, "")
+      }
+    }
+  }
+  a.download = name
+  a.click()
+  URL.revokeObjectURL(blobUrl)
+}
+
 export const azureDeployApi = {
   getMsalConfig: () =>
     request<MsalConfig>("/api/azure-deploy/auth/config"),
@@ -660,6 +710,8 @@ export const azureDeployApi = {
       `/api/azure-deploy/retry/${taskId}`,
       { method: "POST" }
     ),
+
+  exportExcel: (taskId: string) => downloadAzureDeployExcel(taskId),
 }
 
 // ─── Metering (billing_data 云同步用量) API ─────────────────
@@ -793,4 +845,53 @@ export const meteringApi = {
 
   exportUrl: (filters?: MeteringFilters) =>
     `${API_BASE}/api/metering/export${meteringQs(filters)}`,
+}
+
+// ─── Azure Multi-tenant Consent ────────────────────────────────────────
+
+export interface AzureConsentStart {
+  consent_url: string
+  app_client_id: string
+  instructions: string
+}
+
+export interface AzureDiscoveredSubscription {
+  subscription_id: string
+  display_name: string
+  state: string
+}
+
+export interface AzureVerifyResult {
+  ok: boolean
+  message: string
+  discovered_subscriptions: AzureDiscoveredSubscription[]
+}
+
+export interface AzureCloudAccount {
+  id: number
+  name: string
+  provider: string
+  is_active: boolean
+  auth_mode: string
+  consent_status: string
+  created_at: string
+  updated_at: string
+}
+
+export const azureConsentApi = {
+  start: () => request<AzureConsentStart>("/api/azure-consent/start"),
+
+  register: (body: { name: string; tenant_id: string; subscription_ids: string[] }) =>
+    request<AzureCloudAccount>("/api/azure-consent/register", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  verify: (accountId: number) =>
+    request<AzureVerifyResult>(`/api/azure-consent/verify/${accountId}`, { method: "POST" }),
+
+  listSubscriptions: (accountId: number) =>
+    request<{ subscriptions: AzureDiscoveredSubscription[] }>(
+      `/api/azure-consent/subscriptions/${accountId}`,
+    ),
 }
