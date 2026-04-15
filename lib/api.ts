@@ -12,6 +12,14 @@ function getApiBase(): string {
 
 const API_BASE = getApiBase()
 
+function redirectToLogin() {
+  if (typeof window === "undefined") return
+  if (window.location.pathname.startsWith("/api/auth")) return
+  // Cross-origin in prod (static web app → container app). Use absolute URL so
+  // the browser leaves the SPA origin and the cookie lands on the backend host.
+  window.location.href = `${API_BASE}/api/auth/login?redirect=true`
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), 30000) // 30s timeout
@@ -29,8 +37,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const res = await fetch(url, {
       ...restInit,
       headers,
+      credentials: "include",
       signal: controller.signal,
     })
+    if (res.status === 401) {
+      redirectToLogin()
+      throw new Error("API 401: redirecting to login")
+    }
     if (!res.ok) {
       const body = await res.text().catch(() => "")
       throw new Error(`API ${res.status}: ${body}`)
