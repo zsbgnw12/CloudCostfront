@@ -1,7 +1,8 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import { Search, Bell, RefreshCw, Check, AlertTriangle, X, Info, Loader2, ChevronDown } from "lucide-react"
+import { Search, Bell, RefreshCw, Check, AlertTriangle, X, Info, Loader2, ChevronDown, LogOut, User } from "lucide-react"
+import useSWR from "swr"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -30,7 +31,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
-import { alertsApi, accountsApi, syncApi, type AppNotification } from "@/lib/api"
+import { alertsApi, accountsApi, syncApi, authApi, type AppNotification } from "@/lib/api"
 import { useUnreadCount, useNotifications } from "@/hooks/use-data"
 
 interface SyncStatus {
@@ -360,15 +361,46 @@ export function Header() {
           </DropdownMenuContent>
         </DropdownMenu>
 
-        {/* User Avatar */}
-        <Button variant="ghost" size="icon" className="rounded-full">
-          <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center">
-            <span className="text-sm font-medium text-primary-foreground">
-              A
-            </span>
-          </div>
-        </Button>
+        <UserMenu />
       </div>
     </header>
+  )
+}
+
+function UserMenu() {
+  const { data: me } = useSWR("auth:me", () => authApi.me(), { revalidateOnFocus: false })
+  const handleLogout = async () => {
+    try { await authApi.logout() } catch {}
+    window.location.href = authApi.loginUrl()
+  }
+  const initial = (me?.display_name || me?.username || "?").charAt(0).toUpperCase()
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="icon" className="rounded-full">
+          <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center overflow-hidden">
+            {me?.avatar_url ? (
+              <img src={me.avatar_url} alt="" className="w-full h-full object-cover" />
+            ) : (
+              <span className="text-sm font-medium text-primary-foreground">{initial}</span>
+            )}
+          </div>
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-64">
+        <DropdownMenuLabel className="flex flex-col gap-0.5">
+          <span className="text-sm font-medium">{me?.display_name || me?.username || "未登录"}</span>
+          {me?.email && <span className="text-xs text-muted-foreground">{me.email}</span>}
+          {me?.roles?.length ? (
+            <span className="text-xs text-muted-foreground mt-1">角色: {me.roles.join(", ")}</span>
+          ) : null}
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={handleLogout} className="text-destructive focus:text-destructive">
+          <LogOut className="w-4 h-4 mr-2" />
+          注销
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }

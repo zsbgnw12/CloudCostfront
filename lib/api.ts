@@ -236,6 +236,22 @@ export interface DashboardBundle {
 
 // ─── Service Accounts API ─────────────────────────────────────
 
+export interface CurrentUser {
+  id: number
+  username: string
+  email: string | null
+  display_name: string | null
+  avatar_url: string | null
+  roles: string[]
+  visible_cloud_account_ids: number[] | null
+}
+
+export const authApi = {
+  me: () => request<CurrentUser>("/api/auth/me"),
+  logout: () => request<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
+  loginUrl: () => `${API_BASE}/api/auth/login?redirect=true`,
+}
+
 export const accountsApi = {
   list: (params?: { provider?: string; status?: string }) => {
     const qs = new URLSearchParams()
