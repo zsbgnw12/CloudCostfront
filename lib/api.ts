@@ -878,9 +878,9 @@ export const meteringApi = {
 
 // ─── Azure Multi-tenant Consent ────────────────────────────────────────
 
-export interface AzureConsentStart {
+export interface AzureConsentStartResponse {
   consent_url: string
-  app_client_id: string
+  expires_at: string
   instructions: string
 }
 
@@ -907,8 +907,25 @@ export interface AzureCloudAccount {
   updated_at: string
 }
 
+export interface AzureConsentInvite {
+  id: number
+  state: string
+  account_name: string
+  status: string
+  cloud_account_id: number | null
+  created_by: number | null
+  created_at: string
+  expires_at: string
+  consumed_at: string | null
+  error_reason: string | null
+}
+
 export const azureConsentApi = {
-  start: () => request<AzureConsentStart>("/api/azure-consent/start"),
+  start: (body: { account_name: string }) =>
+    request<AzureConsentStartResponse>("/api/azure-consent/start", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 
   register: (body: { name: string; tenant_id: string; subscription_ids: string[] }) =>
     request<AzureCloudAccount>("/api/azure-consent/register", {
@@ -923,4 +940,12 @@ export const azureConsentApi = {
     request<{ subscriptions: AzureDiscoveredSubscription[] }>(
       `/api/azure-consent/subscriptions/${accountId}`,
     ),
+
+  listInvites: () =>
+    request<AzureConsentInvite[]>("/api/azure-consent/invites"),
+
+  revokeInvite: (inviteId: number) =>
+    request<{ ok: boolean; message: string }>(`/api/azure-consent/invites/${inviteId}/revoke`, {
+      method: "POST",
+    }),
 }
