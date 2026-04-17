@@ -791,8 +791,10 @@ export interface MeteringFilters {
   date_end?: string
   provider?: string
   product?: string
-  /** 服务账号 Project.id */
+  /** 服务账号 Project.id（单选；与 account_ids 二选一） */
   account_id?: number
+  /** 服务账号 Project.id 列表（多选；有值时优先于 account_id） */
+  account_ids?: number[]
   /** 货源 supply_sources.id */
   supply_source_id?: number
   /** 供应商名称 suppliers.name */
@@ -808,7 +810,11 @@ function meteringQs(filters?: MeteringFilters): string {
   if (filters.date_end) qs.set("date_end", filters.date_end)
   if (filters.provider) qs.set("provider", filters.provider)
   if (filters.product) qs.set("product", filters.product)
-  if (filters.account_id != null) qs.set("account_id", String(filters.account_id))
+  if (filters.account_ids && filters.account_ids.length > 0) {
+    for (const id of filters.account_ids) qs.append("account_ids", String(id))
+  } else if (filters.account_id != null) {
+    qs.set("account_id", String(filters.account_id))
+  }
   if (filters.supply_source_id != null) qs.set("supply_source_id", String(filters.supply_source_id))
   if (filters.supplier_name) qs.set("supplier_name", filters.supplier_name)
   if (filters.data_source_id != null) qs.set("data_source_id", String(filters.data_source_id))
@@ -842,10 +848,14 @@ export const meteringApi = {
   byService: (filters?: MeteringFilters) =>
     request<MeteringServiceUsage[]>(`/api/metering/by-service${meteringQs(filters)}`),
 
-  products: (provider?: string, extra?: Pick<MeteringFilters, "account_id" | "supply_source_id" | "supplier_name" | "data_source_id">) => {
+  products: (provider?: string, extra?: Pick<MeteringFilters, "account_id" | "account_ids" | "supply_source_id" | "supplier_name" | "data_source_id">) => {
     const qs = new URLSearchParams()
     if (provider) qs.set("provider", provider)
-    if (extra?.account_id != null) qs.set("account_id", String(extra.account_id))
+    if (extra?.account_ids && extra.account_ids.length > 0) {
+      for (const id of extra.account_ids) qs.append("account_ids", String(id))
+    } else if (extra?.account_id != null) {
+      qs.set("account_id", String(extra.account_id))
+    }
     if (extra?.supply_source_id != null) qs.set("supply_source_id", String(extra.supply_source_id))
     if (extra?.supplier_name) qs.set("supplier_name", extra.supplier_name)
     if (extra?.data_source_id != null) qs.set("data_source_id", String(extra.data_source_id))
@@ -859,7 +869,11 @@ export const meteringApi = {
     if (filters?.date_end) qs.set("date_end", filters.date_end)
     if (filters?.provider) qs.set("provider", filters.provider)
     if (filters?.product) qs.set("product", filters.product)
-    if (filters?.account_id != null) qs.set("account_id", String(filters.account_id))
+    if (filters?.account_ids && filters.account_ids.length > 0) {
+      for (const id of filters.account_ids) qs.append("account_ids", String(id))
+    } else if (filters?.account_id != null) {
+      qs.set("account_id", String(filters.account_id))
+    }
     if (filters?.supply_source_id != null) qs.set("supply_source_id", String(filters.supply_source_id))
     if (filters?.supplier_name) qs.set("supplier_name", filters.supplier_name)
     if (filters?.data_source_id != null) qs.set("data_source_id", String(filters.data_source_id))

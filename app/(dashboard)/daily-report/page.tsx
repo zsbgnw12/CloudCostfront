@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { MultiSelect, type MultiSelectOption } from "@/components/ui/multi-select"
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend,
   BarChart, Bar,
@@ -54,7 +55,8 @@ export default function DailyReportPage() {
   const [supplierId, setSupplierId] = useState("__all__")
   /** 货源 supply_sources.id */
   const [supplySourceId, setSupplySourceId] = useState("__all__")
-  const [accountFilter, setAccountFilter] = useState("__all__")
+  /** 服务账号多选：空数组 = 不限（按上游货源/供应商范围） */
+  const [accountIds, setAccountIds] = useState<number[]>([])
   const [loading, setLoading] = useState(false)
   /** 草稿字符串：允许空串、中间态，避免受控 number 一删就回 0 */
   const [discountInput, setDiscountInput] = useState("0")
@@ -98,11 +100,11 @@ export default function DailyReportPage() {
 
   useEffect(() => {
     setSupplySourceId("__all__")
-    setAccountFilter("__all__")
+    setAccountIds([])
   }, [supplierId])
 
   useEffect(() => {
-    setAccountFilter("__all__")
+    setAccountIds([])
   }, [supplySourceId])
 
   const sourcesInScope = useMemo(() => {
@@ -136,15 +138,18 @@ export default function DailyReportPage() {
     return "全部"
   }, [supplySourceId, supplierId, sources, suppliers])
 
-  /** 与上方筛选完全一致：单选服务账号则用该账号；「全部账号」则用当前列表第一个（随分组/云厂商变） */
+  /**
+   * 下方「每日服务费用构成」是单账号视图，取自 /service-accounts/{id}/costs。
+   * 勾选了 1≥ 个账号时取首个勾选项；未勾选时退化为列表第一个（沿用原「全部账号」语义）。
+   */
   const costTargetAccountId = useMemo((): number | null => {
     if (filteredAccounts.length === 0) return null
-    if (accountFilter !== "__all__") {
-      const id = Number(accountFilter)
-      return filteredAccounts.some((a) => a.id === id) ? id : null
+    if (accountIds.length > 0) {
+      const picked = accountIds.find((id) => filteredAccounts.some((a) => a.id === id))
+      return picked ?? null
     }
     return filteredAccounts[0]!.id
-  }, [filteredAccounts, accountFilter])
+  }, [filteredAccounts, accountIds])
 
   useEffect(() => {
     if (costTargetAccountId == null) {
@@ -168,16 +173,17 @@ export default function DailyReportPage() {
     }
   }, [costTargetAccountId, dateRange.start, dateRange.end])
 
-  // Filter rows by group + account
+  // Filter rows by group + account (空数组 = 不限，按上游供应商/货源筛)
   const filteredRows = useMemo(() => {
+    const selected = new Set(accountIds)
     const validIds = new Set<number>()
     for (const a of filteredAccounts) {
-      if (accountFilter === "__all__" || String(a.id) === accountFilter) {
+      if (selected.size === 0 || selected.has(a.id)) {
         validIds.add(a.id)
       }
     }
     return rows.filter((r) => validIds.has(r.account_id))
-  }, [rows, filteredAccounts, accountFilter])
+  }, [rows, filteredAccounts, accountIds])
 
   // Build pivot: dates as columns, accounts (grouped by group_label) as rows
   const pivot = useMemo(() => {
@@ -203,9 +209,10 @@ export default function DailyReportPage() {
     }
     type Group = { label: string; accounts: AcctRow[]; total: number }
 
+    const selectedSet = new Set(accountIds)
     const groupMap = new Map<string, AcctRow[]>()
     for (const a of filteredAccounts) {
-      if (accountFilter !== "__all__" && String(a.id) !== accountFilter) continue
+      if (selectedSet.size > 0 && !selectedSet.has(a.id)) continue
       const label = a.supplier_name ?? "(未分组)"
       if (!groupMap.has(label)) groupMap.set(label, [])
       const dailyCosts = acctMap.get(a.id) ?? new Map()
@@ -238,7 +245,7 @@ export default function DailyReportPage() {
     const grandTotal = Array.from(dateTotals.values()).reduce((s, v) => s + v, 0)
 
     return { dates, groups: groupList, dateTotals, grandTotal }
-  }, [filteredRows, filteredAccounts, accountFilter])
+  }, [filteredRows, filteredAccounts, accountIds])
 
   // Line chart: daily total per account（金额 × 折扣系数，仅展示）
   const lineChartData = useMemo(() => {
@@ -322,7 +329,7 @@ export default function DailyReportPage() {
         <div>
           <h1 className="text-2xl font-semibold text-foreground">统计</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            筛选顺序：供应商 → 货源 → 服务账号。同一套筛选用于日报透视、费用构成与使用明细；「全部账号」时费用取当前列表第一个账号。
+            筛选顺序：供应商 → 货源 → 服务账号（可多选）。同一套筛选用于日报透视、费用构成与使用明细；未勾选账号时费用取当前列表第一个账号，勾选多个时取首个已选。
           </p>
         </div>
         <Button onClick={handleExportAll} disabled={filteredRows.length === 0 || loading} className="gap-2">
@@ -367,18 +374,20 @@ export default function DailyReportPage() {
             </div>
             <div className="space-y-1">
               <Label className="text-xs">服务账号</Label>
-              <Select value={accountFilter} onValueChange={setAccountFilter}>
-                <SelectTrigger className="w-52"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__all__">全部账号</SelectItem>
-                  {filteredAccounts.map((a) => (
-                    <SelectItem key={a.id} value={String(a.id)}>
-                      {a.name}{" "}
-                      <span className="text-xs text-muted-foreground ml-1">({a.external_project_id})</span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <MultiSelect
+                triggerClassName="w-52"
+                placeholder="全部账号"
+                searchPlaceholder="搜索账号名 / ID"
+                emptyText="无可选账号"
+                options={filteredAccounts.map((a) => ({
+                  value: String(a.id),
+                  label: a.name,
+                  keywords: `${a.name} ${a.external_project_id} ${a.provider}`,
+                  description: a.external_project_id,
+                })) satisfies MultiSelectOption[]}
+                value={accountIds.map(String)}
+                onChange={(next) => setAccountIds(next.map(Number))}
+              />
             </div>
             <div className="space-y-1">
               <Label className="text-xs">开始日期</Label>

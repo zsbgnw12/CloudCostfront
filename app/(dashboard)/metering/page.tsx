@@ -18,6 +18,7 @@ import { Label } from "@/components/ui/label"
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select"
+import { MultiSelect, type MultiSelectOption } from "@/components/ui/multi-select"
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table"
@@ -91,20 +92,21 @@ export default function MeteringPage() {
   const [dateEnd, setDateEnd] = useState(format(today, "yyyy-MM-dd"))
   const [supplierId, setSupplierId] = useState("__all__")
   const [supplySourceId, setSupplySourceId] = useState("__all__")
-  const [accountId, setAccountId] = useState("__all__")
+  /** 服务账号多选：空数组 = 不限（按上游供应商/货源范围） */
+  const [accountIds, setAccountIds] = useState<number[]>([])
   const [product, setProduct] = useState<string>("")
   const [page, setPage] = useState(1)
   const pageSize = 20
 
   useEffect(() => {
     setSupplySourceId("__all__")
-    setAccountId("__all__")
+    setAccountIds([])
     setProduct("")
     setPage(1)
   }, [supplierId])
 
   useEffect(() => {
-    setAccountId("__all__")
+    setAccountIds([])
     setProduct("")
     setPage(1)
   }, [supplySourceId])
@@ -150,15 +152,15 @@ export default function MeteringPage() {
 
   const scopeExtra = useMemo(
     () => ({
-      account_id: accountId !== "__all__" ? Number(accountId) : undefined,
+      account_ids: accountIds.length > 0 ? accountIds : undefined,
       supply_source_id:
-        accountId === "__all__" && supplySourceId !== "__all__" ? Number(supplySourceId) : undefined,
+        accountIds.length === 0 && supplySourceId !== "__all__" ? Number(supplySourceId) : undefined,
       supplier_name:
-        accountId === "__all__" && supplySourceId === "__all__" && supplierId !== "__all__"
+        accountIds.length === 0 && supplySourceId === "__all__" && supplierId !== "__all__"
           ? supplierNameForApi
           : undefined,
     }),
-    [accountId, supplySourceId, supplierId, supplierNameForApi],
+    [accountIds, supplySourceId, supplierId, supplierNameForApi],
   )
 
   const filters = useMemo(
@@ -305,19 +307,24 @@ export default function MeteringPage() {
             </div>
             <div className="space-y-1.5 min-w-[220px]">
               <Label className="text-xs">服务账号</Label>
-              <Select value={accountId} onValueChange={(v) => { setAccountId(v); setProduct(""); setPage(1) }}>
-                <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="全部账号" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__all__">全部账号</SelectItem>
-                  {filteredAccounts.map((a) => (
-                    <SelectItem key={a.id} value={String(a.id)}>
-                      <span className="text-[10px] text-muted-foreground mr-1">{a.provider.toUpperCase()}</span>
-                      {a.name}
-                      <span className="text-muted-foreground text-xs ml-1">({a.external_project_id})</span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <MultiSelect
+                triggerClassName="h-8 text-sm w-full"
+                placeholder="全部账号"
+                searchPlaceholder="搜索账号名 / ID"
+                emptyText="无可选账号"
+                options={filteredAccounts.map((a) => ({
+                  value: String(a.id),
+                  label: a.name,
+                  keywords: `${a.name} ${a.external_project_id} ${a.provider}`,
+                  description: `${a.provider.toUpperCase()} · ${a.external_project_id}`,
+                })) satisfies MultiSelectOption[]}
+                value={accountIds.map(String)}
+                onChange={(next) => {
+                  setAccountIds(next.map(Number))
+                  setProduct("")
+                  setPage(1)
+                }}
+              />
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">服务</Label>
