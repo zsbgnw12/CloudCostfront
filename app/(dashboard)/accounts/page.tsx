@@ -5,6 +5,7 @@ import {
   ChevronRight, ChevronDown, FolderOpen, Plus, MoreHorizontal,
   KeyRound, Pause, Play, Trash2, Eye, EyeOff, Pencil,
   Loader2, ArrowLeft, Building2,
+  Link2, Copy, CheckCircle2, AlertTriangle, Clock,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -17,7 +18,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
-import { accountsApi, type ServiceAccount, type ServiceAccountDetail, type HistoryItem, type SupplySourceItem } from "@/lib/api"
+import {
+  accountsApi, azureConsentApi,
+  type ServiceAccount, type ServiceAccountDetail, type HistoryItem, type SupplySourceItem,
+  type AzureConsentInvite, type AzureConsentStartResponse, type AzureDiscoveredSubscription,
+} from "@/lib/api"
 import { useAccounts, useSupplySourcesAll } from "@/hooks/use-data"
 import { cn } from "@/lib/utils"
 
@@ -203,13 +208,14 @@ function AwsCredentialFields({ value, onChange }: { value: string; onChange: (v:
   )
 }
 
-type CredUiMode = "fields" | "json"
+type CredUiMode = "fields" | "json" | "invite"
 
 /** 云厂商侧配置（账号/订阅/项目 ID 与密钥均在此；JSON 为整段导入） */
 function CredentialSection({
   provider,
   mode,
   onModeChange,
+  allowInvite,
   secretJson,
   onSecretJsonChange,
   azureSubscriptionId,
@@ -220,10 +226,13 @@ function CredentialSection({
   azureJson,
   onAzurePatch,
   onAzureJsonChange,
+  inviteSection,
 }: {
   provider: string
   mode: CredUiMode
   onModeChange: (m: CredUiMode) => void
+  /** 是否显示 Tab A「链接接入」——仅在 Azure + 新建场景启用 */
+  allowInvite?: boolean
   secretJson: string
   onSecretJsonChange: (v: string) => void
   azureSubscriptionId: string
@@ -238,15 +247,55 @@ function CredentialSection({
     azure_client_secret?: string
   }) => void
   onAzureJsonChange: (v: string) => void
+  /** Azure Tab A 的渲染体，由父组件提供（它持有 invite 状态） */
+  inviteSection?: React.ReactNode
 }) {
   const p = provider.toLowerCase()
-  const showToggle = p === "aws" || p === "azure"
+  const isAzure = p === "azure"
+  const showAwsToggle = p === "aws"
+  const showAzureToggle = isAzure
 
   return (
     <div className="rounded-xl border border-border bg-muted/25 p-3 space-y-3">
       <div className="flex items-center justify-between gap-2">
         <span className="text-sm font-medium text-foreground">云厂商账号配置</span>
-        {showToggle ? (
+        {showAzureToggle ? (
+          <div className="flex rounded-md border border-border bg-background p-0.5 shrink-0">
+            {allowInvite && (
+              <button
+                type="button"
+                className={cn(
+                  "px-2.5 py-1 text-xs rounded-sm transition-colors",
+                  mode === "invite" ? "bg-primary/20 text-primary shadow-sm" : "text-muted-foreground hover:text-foreground",
+                )}
+                onClick={() => onModeChange("invite")}
+                title="通过邀请链接由客户一键授权（推荐）"
+              >
+                链接接入
+              </button>
+            )}
+            <button
+              type="button"
+              className={cn(
+                "px-2.5 py-1 text-xs rounded-sm transition-colors",
+                mode === "fields" ? "bg-secondary text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+              )}
+              onClick={() => onModeChange("fields")}
+            >
+              字段
+            </button>
+            <button
+              type="button"
+              className={cn(
+                "px-2.5 py-1 text-xs rounded-sm transition-colors",
+                mode === "json" ? "bg-secondary text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+              )}
+              onClick={() => onModeChange("json")}
+            >
+              JSON
+            </button>
+          </div>
+        ) : showAwsToggle ? (
           <div className="flex rounded-md border border-border bg-background p-0.5 shrink-0">
             <button
               type="button"
@@ -273,6 +322,8 @@ function CredentialSection({
           <span className="text-[11px] text-muted-foreground shrink-0">JSON 密钥</span>
         )}
       </div>
+
+      {isAzure && mode === "invite" && inviteSection}
 
       {p === "gcp" && (
         <>
@@ -311,7 +362,7 @@ function CredentialSection({
           <AwsCredentialFields value={secretJson} onChange={onSecretJsonChange} />
         ))}
 
-      {p === "azure" &&
+      {p === "azure" && mode !== "invite" &&
         (mode === "json" ? (
           <>
             <p className="text-[11px] text-muted-foreground leading-snug">
@@ -381,6 +432,260 @@ function CredentialSection({
             </div>
           </div>
         ))}
+    </div>
+  )
+}
+
+/** 供父组件持有的 Azure Tab A 状态 */
+type AzureInviteState = {
+  invite: {
+    id: number
+    consent_url: string
+    expires_at: string
+    status: "pending" | "consumed" | "failed" | "expired"
+    cloud_account_id: number | null
+    error_reason?: string | null
+  } | null
+  starting: boolean
+  verifying: boolean
+  verifyMessage: string | null
+  discovered: AzureDiscoveredSubscription[]
+  selectedSubscriptionId: string
+}
+
+const emptyInviteState: AzureInviteState = {
+  invite: null,
+  starting: false,
+  verifying: false,
+  verifyMessage: null,
+  discovered: [],
+  selectedSubscriptionId: "",
+}
+
+/** Azure Tab A「链接接入」渲染体 */
+function AzureInviteSection({
+  accountName,
+  state,
+  onStateChange,
+}: {
+  accountName: string
+  state: AzureInviteState
+  onStateChange: (patch: Partial<AzureInviteState>) => void
+}) {
+  const [copied, setCopied] = useState(false)
+
+  const canGenerate = accountName.trim().length > 0 && !state.starting && !state.invite
+
+  const handleGenerate = async () => {
+    if (!canGenerate) return
+    onStateChange({ starting: true })
+    try {
+      const resp: AzureConsentStartResponse = await azureConsentApi.start({
+        account_name: accountName.trim(),
+      })
+      // 后端从 list 接口取回以同步 id（start 响应里没给 id）
+      const all = await azureConsentApi.listInvites()
+      const mine = all
+        .filter((i) => i.account_name === accountName.trim() && i.status === "pending")
+        .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))[0]
+      onStateChange({
+        starting: false,
+        invite: {
+          id: mine?.id ?? 0,
+          consent_url: resp.consent_url,
+          expires_at: resp.expires_at,
+          status: "pending",
+          cloud_account_id: null,
+        },
+      })
+    } catch (e) {
+      onStateChange({ starting: false })
+      alert(`生成邀请链接失败: ${e instanceof Error ? e.message : e}`)
+    }
+  }
+
+  const handleCopy = () => {
+    if (!state.invite) return
+    navigator.clipboard.writeText(state.invite.consent_url)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
+
+  const handleVerify = async () => {
+    if (!state.invite?.cloud_account_id) return
+    onStateChange({ verifying: true, verifyMessage: null })
+    try {
+      const r = await azureConsentApi.verify(state.invite.cloud_account_id)
+      onStateChange({
+        verifying: false,
+        verifyMessage: r.message,
+        discovered: r.discovered_subscriptions,
+        selectedSubscriptionId:
+          state.selectedSubscriptionId ||
+          (r.discovered_subscriptions.length === 1 ? r.discovered_subscriptions[0].subscription_id : ""),
+      })
+    } catch (e) {
+      onStateChange({
+        verifying: false,
+        verifyMessage: e instanceof Error ? e.message : String(e),
+      })
+    }
+  }
+
+  const handleRevokeAndReset = async () => {
+    if (state.invite && state.invite.status === "pending") {
+      try { await azureConsentApi.revokeInvite(state.invite.id) } catch { /* ignore */ }
+    }
+    onStateChange(emptyInviteState)
+  }
+
+  const jsonPreview = useMemo(() => {
+    if (!state.invite) return ""
+    const obj = {
+      invite_id: state.invite.id || null,
+      status: state.invite.status,
+      consent_url: state.invite.consent_url,
+      expires_at: state.invite.expires_at,
+      cloud_account_id: state.invite.cloud_account_id,
+      discovered_subscriptions: state.discovered.length > 0 ? state.discovered : null,
+      selected_subscription_id: state.selectedSubscriptionId || null,
+    }
+    return JSON.stringify(obj, null, 2)
+  }, [state])
+
+  const statusPill = (() => {
+    if (!state.invite) return null
+    const map: Record<string, { label: string; cls: string; icon: React.ReactNode }> = {
+      pending:  { label: "待客户同意", cls: "bg-blue-500/15 text-blue-400 border-blue-500/30",  icon: <Clock className="w-3 h-3" /> },
+      consumed: { label: "已同意",     cls: "bg-green-500/15 text-green-400 border-green-500/30", icon: <CheckCircle2 className="w-3 h-3" /> },
+      failed:   { label: "失败",       cls: "bg-red-500/15 text-red-400 border-red-500/30",     icon: <AlertTriangle className="w-3 h-3" /> },
+      expired:  { label: "已过期",     cls: "bg-gray-500/15 text-gray-400 border-gray-500/30",   icon: <AlertTriangle className="w-3 h-3" /> },
+    }
+    const info = map[state.invite.status] ?? map.pending
+    return (
+      <span className={cn("inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] border", info.cls)}>
+        {info.icon} {info.label}
+      </span>
+    )
+  })()
+
+  return (
+    <div className="space-y-3">
+      <div className="rounded-md border border-border bg-background/50 p-2.5 text-[11px] text-muted-foreground leading-relaxed">
+        <div className="flex items-start gap-2">
+          <Link2 className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+          <div className="space-y-0.5">
+            <p className="text-foreground/90 font-medium">默认接入方式：邀请链接</p>
+            <p>
+              生成后发给客户 <span className="text-foreground/80">租户级管理员（Global Admin 等）</span> 一键点击，后端自动创建云账号。
+              客户再去目标订阅分配 <code className="text-[10px]">Cost Management Reader</code>，回来点"验证订阅"即可。
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {!state.invite ? (
+        <div className="flex flex-col items-center gap-2 py-4">
+          <Button
+            type="button"
+            onClick={handleGenerate}
+            disabled={!canGenerate}
+            className="gap-1.5"
+          >
+            {state.starting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Link2 className="w-4 h-4" />}
+            生成接入链接
+          </Button>
+          {!accountName.trim() && (
+            <p className="text-[11px] text-muted-foreground">请先在上方填写"显示名称"</p>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            {statusPill}
+            <span className="text-[11px] text-muted-foreground">
+              有效期至 {state.invite.expires_at ? new Date(state.invite.expires_at).toLocaleString("zh-CN") : "-"}
+            </span>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">授权链接（发送给客户）</Label>
+            <div className="flex gap-2">
+              <Input
+                readOnly
+                value={state.invite.consent_url}
+                className={cn("font-mono text-[11px] h-9", CTRL_SURFACE)}
+                onClick={(e) => (e.target as HTMLInputElement).select()}
+              />
+              <Button type="button" variant="outline" size="sm" onClick={handleCopy}>
+                {copied ? <CheckCircle2 className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
+              </Button>
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">接入进度（JSON 只读）</Label>
+            <Textarea
+              readOnly
+              rows={7}
+              value={jsonPreview}
+              className={cn("font-mono text-[11px] min-h-[140px]", CTRL_SURFACE)}
+            />
+          </div>
+
+          {state.invite.status === "consumed" && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <Button type="button" variant="outline" size="sm" onClick={handleVerify} disabled={state.verifying}>
+                  {state.verifying ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <CheckCircle2 className="w-3.5 h-3.5 mr-1" />}
+                  验证订阅
+                </Button>
+                {state.verifyMessage && (
+                  <span className="text-[11px] text-muted-foreground">{state.verifyMessage}</span>
+                )}
+              </div>
+
+              {state.discovered.length > 0 && (
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">选择要绑定到本货源的订阅</Label>
+                  <Select
+                    value={state.selectedSubscriptionId}
+                    onValueChange={(v) => onStateChange({ selectedSubscriptionId: v })}
+                  >
+                    <SelectTrigger className={cn("h-9 w-full font-mono text-xs", CTRL_SURFACE)}>
+                      <SelectValue placeholder="从发现的订阅中选择一个" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {state.discovered.map((s) => (
+                        <SelectItem key={s.subscription_id} value={s.subscription_id}>
+                          {s.display_name} · {s.subscription_id}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-[10px] text-muted-foreground">
+                    一个租户若有多个订阅，可再次创建货源时复用同一租户（系统检测到已存在的 tenant 会复用账号）。
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {(state.invite.status === "failed" || state.invite.status === "expired") && (
+            <div className="rounded-md border border-red-500/30 bg-red-500/10 p-2.5 text-[11px] text-red-400">
+              {state.invite.status === "expired" ? "邀请已过期" : "客户未完成同意"}
+              {state.invite.error_reason && `：${state.invite.error_reason}`}
+              。请重新生成。
+            </div>
+          )}
+
+          <div className="flex justify-end">
+            <Button type="button" variant="ghost" size="sm" onClick={handleRevokeAndReset}>
+              {state.invite.status === "pending" ? "作废并重新生成" : "重新生成"}
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -473,6 +778,11 @@ export default function AccountsPage() {
   const [actionLoading, setActionLoading] = useState<string | null>(null)
   const [createCredMode, setCreateCredMode] = useState<CredUiMode>("fields")
   const [editCredMode, setEditCredMode] = useState<CredUiMode>("fields")
+  const [inviteState, setInviteState] = useState<AzureInviteState>(emptyInviteState)
+  const patchInviteState = useCallback(
+    (patch: Partial<AzureInviteState>) => setInviteState((prev) => ({ ...prev, ...patch })),
+    [],
+  )
 
   // View mode: "cards" shows account cards for selected group, "detail" shows single account
   const viewMode = selectedId && detail ? "detail" : "cards"
@@ -554,6 +864,47 @@ export default function AccountsPage() {
     return sources.find((s) => s.id === sid)?.provider ?? "aws"
   }, [form.supply_source_id, sources])
 
+  // 选到 Azure 时默认切到「链接接入」；离开 Azure 切回「字段」。
+  // 只在 provider 变化的瞬间重置，允许用户之后手动切换。
+  const prevProviderRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!createOpen) {
+      prevProviderRef.current = null
+      return
+    }
+    if (prevProviderRef.current === formProvider) return
+    prevProviderRef.current = formProvider
+    if (formProvider === "azure") {
+      setCreateCredMode("invite")
+    } else {
+      setCreateCredMode("fields")
+    }
+  }, [formProvider, createOpen])
+
+  // 轮询：邀请 pending 时每 5s 拉一次列表，发现状态变化则同步
+  useEffect(() => {
+    if (!createOpen) return
+    const cur = inviteState.invite
+    if (!cur || cur.status !== "pending") return
+    const id = setInterval(async () => {
+      try {
+        const all = await azureConsentApi.listInvites()
+        const mine = all.find((i) => i.id === cur.id)
+        if (!mine || mine.status === cur.status) return
+        const newStatus = mine.status as "pending" | "consumed" | "failed" | "expired"
+        patchInviteState({
+          invite: {
+            ...cur,
+            status: newStatus,
+            cloud_account_id: mine.cloud_account_id ?? null,
+            error_reason: mine.error_reason,
+          },
+        })
+      } catch { /* transient, ignore */ }
+    }, 5000)
+    return () => clearInterval(id)
+  }, [createOpen, inviteState.invite, patchInviteState])
+
   const editProvider = useMemo(() => {
     const sid = editForm.supply_source_id ? Number(editForm.supply_source_id) : null
     if (sid == null || Number.isNaN(sid)) return detail?.provider ?? "aws"
@@ -583,6 +934,37 @@ export default function AccountsPage() {
         alert("请选择供应商与云（货源）")
         return
       }
+
+      // Tab A「链接接入」：邀请已被客户同意 → PUT 已有的 cloud_account 完成绑定
+      if (formProvider === "azure" && createCredMode === "invite") {
+        const inv = inviteState.invite
+        if (!inv) {
+          alert("请先点「生成接入链接」并把链接发给客户")
+          return
+        }
+        if (inv.status !== "consumed" || !inv.cloud_account_id) {
+          alert("邀请尚未完成。客户同意后再回到此处提交；也可直接关闭弹窗，在右上角「邀请记录」里查看进度。")
+          return
+        }
+        if (!inviteState.selectedSubscriptionId) {
+          alert("请先点「验证订阅」并选择要绑定的订阅")
+          return
+        }
+        await accountsApi.update(inv.cloud_account_id, {
+          supply_source_id: ssid,
+          name: form.name,
+          external_project_id: inviteState.selectedSubscriptionId,
+          notes: form.notes || undefined,
+          order_method: form.order_method.trim() || null,
+        })
+        setCreateOpen(false)
+        setCreateCredMode("fields")
+        setForm(emptyForm())
+        setInviteState(emptyInviteState)
+        await load()
+        return
+      }
+
       let secret_data: Record<string, unknown> = {}
       let external_id = ""
       if (formProvider === "azure") {
@@ -833,6 +1215,7 @@ export default function AccountsPage() {
               if (!open) {
                 setForm(emptyForm())
                 setCreateCredMode("fields")
+                setInviteState(emptyInviteState)
               }
             }}>
               <DialogTrigger asChild>
@@ -939,6 +1322,7 @@ export default function AccountsPage() {
                   provider={formProvider}
                   mode={createCredMode}
                   onModeChange={setCreateCredMode}
+                  allowInvite={formProvider === "azure"}
                   secretJson={form.secret_json}
                   onSecretJsonChange={(v) => setForm({ ...form, secret_json: v })}
                   azureSubscriptionId={form.external_project_id}
@@ -949,6 +1333,13 @@ export default function AccountsPage() {
                   azureJson={form.azure_json}
                   onAzurePatch={(p) => setForm((f) => ({ ...f, ...p }))}
                   onAzureJsonChange={(v) => setForm({ ...form, azure_json: v })}
+                  inviteSection={
+                    <AzureInviteSection
+                      accountName={form.name}
+                      state={inviteState}
+                      onStateChange={patchInviteState}
+                    />
+                  }
                 />
               </div>
               <DialogFooter>
@@ -957,7 +1348,13 @@ export default function AccountsPage() {
                   onClick={handleCreate}
                   disabled={
                     !form.supplier_id || !form.supply_source_id || !form.name?.trim() || actionLoading === "create"
-                    || (formProvider === "azure" && (() => {
+                    || (formProvider === "azure" && createCredMode === "invite" && (
+                      !inviteState.invite
+                      || inviteState.invite.status !== "consumed"
+                      || !inviteState.invite.cloud_account_id
+                      || !inviteState.selectedSubscriptionId
+                    ))
+                    || (formProvider === "azure" && createCredMode !== "invite" && (() => {
                       try {
                         const m = mergeAzureCredentialJson(form.azure_json, {
                           tenant_id: form.azure_tenant_id.trim(),
@@ -988,7 +1385,10 @@ export default function AccountsPage() {
                     })())
                   }
                 >
-                  {actionLoading === "create" && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}创建
+                  {actionLoading === "create" && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                  {formProvider === "azure" && createCredMode === "invite"
+                    ? "完成接入"
+                    : "创建"}
                 </Button>
               </DialogFooter>
             </DialogContent>

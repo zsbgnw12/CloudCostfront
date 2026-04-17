@@ -1,7 +1,10 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import { Search, Bell, RefreshCw, Check, AlertTriangle, X, Info, Loader2, ChevronDown, LogOut, User } from "lucide-react"
+import {
+  Search, Bell, RefreshCw, Check, AlertTriangle, Info, Loader2, ChevronDown, LogOut,
+  MailPlus, CheckCircle2, Ban, Clock,
+} from "lucide-react"
 import useSWR from "swr"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -31,7 +34,10 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
-import { alertsApi, accountsApi, syncApi, authApi, type AppNotification } from "@/lib/api"
+import {
+  alertsApi, accountsApi, syncApi, authApi, azureConsentApi,
+  type AzureConsentInvite, type AzureVerifyResult,
+} from "@/lib/api"
 import { useUnreadCount, useNotifications } from "@/hooks/use-data"
 
 interface SyncStatus {
@@ -294,6 +300,9 @@ export function Header() {
           </DialogContent>
         </Dialog>
 
+        {/* Azure 邀请记录（仅 cloud_admin/cloud_ops 可见） */}
+        <InvitationsMenu />
+
         {/* Notifications */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -402,5 +411,211 @@ function UserMenu() {
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
+  )
+}
+
+/* ───── Azure 邀请记录下拉 ─────────────────────────────────
+ * 显示条件：角色是 cloud_admin 或 cloud_ops。
+ * 角标：pending 数量优先（红），无 pending 时显示 consumed 未验证数量（黄）。
+ * 操作：复制链接 / 验证订阅 / 作废 / 打开完整列表。 */
+const INVITE_STATUS_MAP: Record<string, { label: string; className: string }> = {
+  pending:  { label: "待客户同意", className: "bg-blue-500/15 text-blue-400 border-blue-500/30" },
+  consumed: { label: "已同意",     className: "bg-green-500/15 text-green-400 border-green-500/30" },
+  failed:   { label: "失败",       className: "bg-red-500/15 text-red-400 border-red-500/30" },
+  expired:  { label: "已过期",     className: "bg-gray-500/15 text-gray-400 border-gray-500/30" },
+}
+
+function timeAgoShort(dateStr: string | null | undefined) {
+  if (!dateStr) return ""
+  const diff = Date.now() - new Date(dateStr).getTime()
+  const mins = Math.floor(diff / 60000)
+  if (mins < 1) return "刚刚"
+  if (mins < 60) return `${mins}分钟前`
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return `${hours}小时前`
+  const days = Math.floor(hours / 24)
+  return `${days}天前`
+}
+
+function InvitationsMenu() {
+  const { data: me } = useSWR("auth:me", () => authApi.me(), { revalidateOnFocus: false })
+  const canSee = (me?.roles ?? []).some((r) => r === "cloud_admin" || r === "cloud_ops")
+
+  // 仅在有权限时才轮询邀请列表（30s），避免无权限用户反复打 403
+  const { data: invites, mutate } = useSWR<AzureConsentInvite[]>(
+    canSee ? "azure-consent:invites" : null,
+    () => azureConsentApi.listInvites(),
+    { refreshInterval: 30_000, revalidateOnFocus: false },
+  )
+
+  const [verifyOpen, setVerifyOpen] = useState(false)
+  const [verifying, setVerifying] = useState(false)
+  const [verifyResult, setVerifyResult] = useState<AzureVerifyResult | null>(null)
+
+  if (!canSee) return null
+
+  const list = invites ?? []
+  const pendingCount  = list.filter((i) => i.status === "pending").length
+  const unverifiedCount = list.filter((i) => i.status === "consumed").length
+
+  const badgeValue = pendingCount > 0 ? pendingCount : unverifiedCount
+  const badgeTone = pendingCount > 0 ? "destructive" : "secondary"
+
+  const handleRevoke = async (id: number) => {
+    try {
+      await azureConsentApi.revokeInvite(id)
+      mutate()
+    } catch (e) { alert(`作废失败: ${e instanceof Error ? e.message : e}`) }
+  }
+
+  const handleVerify = async (accountId: number) => {
+    setVerifyOpen(true)
+    setVerifying(true)
+    setVerifyResult(null)
+    try {
+      const r = await azureConsentApi.verify(accountId)
+      setVerifyResult(r)
+      mutate()
+    } catch (e) {
+      setVerifyResult({ ok: false, message: String(e), discovered_subscriptions: [] })
+    } finally {
+      setVerifying(false)
+    }
+  }
+
+  return (
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="icon" className="relative" title="Azure 接入邀请">
+            <MailPlus className="w-5 h-5 text-muted-foreground" />
+            {badgeValue > 0 && (
+              <Badge
+                variant={badgeTone as "destructive" | "secondary"}
+                className="absolute -top-1 -right-1 h-5 w-5 flex items-center justify-center p-0 text-xs"
+              >
+                {badgeValue}
+              </Badge>
+            )}
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-96">
+          <DropdownMenuLabel className="flex items-center justify-between">
+            <span>Azure 接入邀请</span>
+            <span className="text-xs text-muted-foreground font-normal">
+              {pendingCount > 0 && <>待同意 {pendingCount}</>}
+              {pendingCount > 0 && unverifiedCount > 0 && " · "}
+              {unverifiedCount > 0 && <>待验证 {unverifiedCount}</>}
+            </span>
+          </DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          {list.length === 0 ? (
+            <div className="p-4 text-center text-muted-foreground text-sm">
+              暂无邀请记录
+              <div className="text-xs mt-1 text-muted-foreground/70">
+                在「货源管理 → 新建货源」选择 Azure 时生成
+              </div>
+            </div>
+          ) : (
+            list.slice(0, 10).map((inv) => {
+              const st = INVITE_STATUS_MAP[inv.status] ?? INVITE_STATUS_MAP.pending
+              return (
+                <div key={inv.id} className="px-3 py-2 border-b border-border/50 last:border-0">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-medium text-sm truncate">{inv.account_name}</span>
+                    <span className={cn("px-1.5 py-0.5 rounded text-[10px] border shrink-0", st.className)}>
+                      {st.label}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
+                    <Clock className="w-3 h-3" />
+                    <span>{timeAgoShort(inv.created_at)}</span>
+                    {inv.cloud_account_id && (
+                      <span className="font-mono">· 账号 #{inv.cloud_account_id}</span>
+                    )}
+                  </div>
+                  {inv.error_reason && (
+                    <div className="mt-1 text-[11px] text-red-400 truncate" title={inv.error_reason}>
+                      {inv.error_reason}
+                    </div>
+                  )}
+                  <div className="flex items-center gap-1 mt-2">
+                    {inv.status === "pending" && (
+                      <Button
+                        variant="ghost" size="sm"
+                        className="h-7 text-xs"
+                        onClick={() => handleRevoke(inv.id)}
+                      >
+                        <Ban className="w-3 h-3 mr-1" /> 作废
+                      </Button>
+                    )}
+                    {inv.status === "consumed" && inv.cloud_account_id && (
+                      <Button
+                        variant="ghost" size="sm"
+                        className="h-7 text-xs"
+                        onClick={() => handleVerify(inv.cloud_account_id!)}
+                      >
+                        <CheckCircle2 className="w-3 h-3 mr-1" /> 验证订阅
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              )
+            })
+          )}
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            className="justify-center text-primary text-sm"
+            onClick={() => { window.location.href = "/azure-onboard" }}
+          >
+            查看全部邀请
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      <Dialog open={verifyOpen} onOpenChange={(open) => { if (!open) { setVerifyOpen(false); setVerifyResult(null) } }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>验证订阅授权</DialogTitle>
+            <DialogDescription>
+              调用 ARM 探测该租户下我们 SP 可见的订阅。未看到订阅表示客户尚未在目标订阅上分配 Cost Management Reader 角色。
+            </DialogDescription>
+          </DialogHeader>
+          {verifying ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              <span className="ml-2 text-muted-foreground">正在检测授权…</span>
+            </div>
+          ) : verifyResult ? (
+            <div className="space-y-4">
+              <div className={cn(
+                "flex items-center gap-2 p-3 rounded text-sm border",
+                verifyResult.ok
+                  ? "bg-green-500/10 border-green-500/50 text-green-400"
+                  : "bg-amber-500/10 border-amber-500/50 text-amber-400",
+              )}>
+                {verifyResult.ok ? <CheckCircle2 className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
+                <span>{verifyResult.message}</span>
+              </div>
+              {verifyResult.discovered_subscriptions.length > 0 && (
+                <div className="space-y-1">
+                  <Label>已发现的订阅</Label>
+                  <ul className="space-y-1 max-h-60 overflow-y-auto">
+                    {verifyResult.discovered_subscriptions.map((s) => (
+                      <li key={s.subscription_id} className="font-mono text-xs text-muted-foreground">
+                        {s.display_name} · {s.subscription_id} · {s.state}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          ) : null}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setVerifyOpen(false); setVerifyResult(null) }}>关闭</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   )
 }

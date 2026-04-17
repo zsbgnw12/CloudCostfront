@@ -14,6 +14,8 @@ import {
   Sparkles,
   Bell,
 } from "lucide-react"
+// Azure 接入入口已迁至「货源管理 → 新建货源（Azure）」和 Header 邀请记录下拉，
+// 侧边栏不再展示独立入口。原 /azure-onboard 页作为"查看全部"落地页保留。
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { useState } from "react"
@@ -23,7 +25,6 @@ const navigation = [
   { name: "供应商管理", href: "/suppliers", icon: Building2 },
   { name: "货源管理", href: "/accounts", icon: Package },
   { name: "模型管理", href: "/azure-deploy", icon: Sparkles },
-  { name: "Azure 接入", href: "/azure-onboard", icon: Cloud },
   { name: "计量", href: "/metering", icon: Activity },
   { name: "统计", href: "/daily-report", icon: TrendingUp },
   { name: "告警", href: "/alerts", icon: Bell },
