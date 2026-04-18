@@ -39,8 +39,8 @@ const ACTION_LABELS: Record<string, string> = {
   created: "创建账号",
   suspended: "停用", activated: "启用", deleted: "删除",
   standby: "置为备用",
-  customer_bound: "绑定客户",
-  customer_unbound: "解绑客户",
+  customer_bound: "绑定客户编号",
+  customer_unbound: "解绑客户编号",
   customer_batch_synced: "销售系统同步",
 }
 
@@ -1055,12 +1055,12 @@ export default function AccountsPage() {
       await accountsApi.update(selectedId, { customer_codes: next })
       setCustomerDraft("")
       await load(); await loadDetail(selectedId)
-    } catch (e) { alert(`绑定客户失败: ${e instanceof Error ? e.message : e}`) }
+    } catch (e) { alert(`绑定客户编号失败: ${e instanceof Error ? e.message : e}`) }
     finally { setCustomerBusy(false) }
   }
   const handleRemoveCustomer = async (code: string) => {
     if (!selectedId || !detail) return
-    if (!confirm(`解除客户 ${code} 与该账号的绑定？`)) return
+    if (!confirm(`解除客户编号 ${code} 与该账号的绑定？`)) return
     const next = (detail.customer_codes ?? []).filter((c) => c !== code)
     try {
       setCustomerBusy(true)
@@ -1520,7 +1520,7 @@ export default function AccountsPage() {
               <CardContent>
                 <div className="flex flex-wrap gap-2 mb-3">
                   {(detail.customer_codes ?? []).length === 0 ? (
-                    <span className="text-sm text-muted-foreground">暂未分配客户</span>
+                    <span className="text-sm text-muted-foreground">暂未分配客户编号</span>
                   ) : (
                     (detail.customer_codes ?? []).map((c) => (
                       <Badge
@@ -1810,7 +1810,7 @@ export default function AccountsPage() {
                       </div>
                       <Separator className="my-3" />
                       <div className="flex items-center justify-between text-xs mt-1.5">
-                        <span className="text-muted-foreground">客户</span>
+                        <span className="text-muted-foreground">客户编号</span>
                         <span className="text-foreground truncate max-w-[60%] text-right">
                           {(a.customer_codes ?? []).length === 0
                             ? "—"
