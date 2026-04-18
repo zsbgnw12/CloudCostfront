@@ -66,6 +66,8 @@ export interface ServiceAccount {
   external_project_id: string
   status: string
   order_method?: string | null
+  /** 销售系统分配的客户编号，可能多个；空数组即 "未分配"。 */
+  customer_codes: string[]
   created_at: string
 }
 
@@ -89,6 +91,8 @@ export interface HistoryItem {
   from_status: string | null
   to_status: string | null
   operator: string | null
+  /** customer_bound / customer_unbound 日志条目上的客户编号。 */
+  customer_code?: string | null
   notes: string | null
   created_at: string
 }
@@ -253,10 +257,11 @@ export const authApi = {
 }
 
 export const accountsApi = {
-  list: (params?: { provider?: string; status?: string }) => {
+  list: (params?: { provider?: string; status?: string; customer_code?: string }) => {
     const qs = new URLSearchParams()
     if (params?.provider) qs.set("provider", params.provider)
     if (params?.status) qs.set("status", params.status)
+    if (params?.customer_code) qs.set("customer_code", params.customer_code)
     const q = qs.toString()
     // 与 FastAPI @router.get("/") 一致，必须带尾部斜杠，否则会 307，跨域 fetch 可能失败
     return request<ServiceAccount[]>(q ? `/api/service-accounts/?${q}` : "/api/service-accounts/")
@@ -278,6 +283,8 @@ export const accountsApi = {
     secret_data?: Record<string, unknown>
     notes?: string
     order_method?: string | null
+    /** 全量覆盖语义：undefined 不动；[] 清空；[...] 替换。空集合会自动把状态派生为 "备用"。 */
+    customer_codes?: string[]
   }) =>
     request<ServiceAccountDetail>(`/api/service-accounts/${id}`, { method: "PUT", body: JSON.stringify(data) }),
   suspend: (id: number) =>

@@ -38,6 +38,10 @@ const PROVIDER_LABELS: Record<string, string> = { aws: "AWS", gcp: "GCP", azure:
 const ACTION_LABELS: Record<string, string> = {
   created: "创建账号",
   suspended: "停用", activated: "启用", deleted: "删除",
+  standby: "置为备用",
+  customer_bound: "绑定客户",
+  customer_unbound: "解绑客户",
+  customer_batch_synced: "销售系统同步",
 }
 
 /** Azure 下单方式（仅 Azure 货源展示与提交） */
@@ -1038,6 +1042,34 @@ export default function AccountsPage() {
     finally { setActionLoading(null) }
   }
 
+  const [customerDraft, setCustomerDraft] = useState("")
+  const [customerBusy, setCustomerBusy] = useState(false)
+  const handleAddCustomer = async () => {
+    if (!selectedId || !detail) return
+    const code = customerDraft.trim().toUpperCase()
+    if (!code) return
+    if ((detail.customer_codes ?? []).includes(code)) { setCustomerDraft(""); return }
+    const next = [...(detail.customer_codes ?? []), code]
+    try {
+      setCustomerBusy(true)
+      await accountsApi.update(selectedId, { customer_codes: next })
+      setCustomerDraft("")
+      await load(); await loadDetail(selectedId)
+    } catch (e) { alert(`绑定客户失败: ${e instanceof Error ? e.message : e}`) }
+    finally { setCustomerBusy(false) }
+  }
+  const handleRemoveCustomer = async (code: string) => {
+    if (!selectedId || !detail) return
+    if (!confirm(`解除客户 ${code} 与该账号的绑定？`)) return
+    const next = (detail.customer_codes ?? []).filter((c) => c !== code)
+    try {
+      setCustomerBusy(true)
+      await accountsApi.update(selectedId, { customer_codes: next })
+      await load(); await loadDetail(selectedId)
+    } catch (e) { alert(`解绑失败: ${e instanceof Error ? e.message : e}`) }
+    finally { setCustomerBusy(false) }
+  }
+
   const handleDelete = async (id: number, name: string) => {
     if (!confirm(`确定删除"${name}"？此操作不可恢复，将从数据库中彻底移除！`)) return
     try {
@@ -1484,6 +1516,57 @@ export default function AccountsPage() {
               <Card className="bg-card border-border"><CardHeader className="pb-2"><CardTitle className="text-sm font-medium">备注</CardTitle></CardHeader><CardContent><p className="text-sm text-muted-foreground">{detail.notes || "暂无备注"}</p></CardContent></Card>
             </div>
             <Card className="bg-card border-border">
+              <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">关联客户编号</CardTitle></CardHeader>
+              <CardContent>
+                <div className="flex flex-wrap gap-2 mb-3">
+                  {(detail.customer_codes ?? []).length === 0 ? (
+                    <span className="text-sm text-muted-foreground">暂未分配客户</span>
+                  ) : (
+                    (detail.customer_codes ?? []).map((c) => (
+                      <Badge
+                        key={c}
+                        variant="secondary"
+                        className="font-mono text-xs gap-1 pr-1"
+                      >
+                        {c}
+                        <button
+                          onClick={() => handleRemoveCustomer(c)}
+                          disabled={customerBusy}
+                          className="ml-1 rounded-sm hover:bg-muted px-1 text-muted-foreground hover:text-foreground"
+                          title="解绑"
+                        >
+                          ×
+                        </button>
+                      </Badge>
+                    ))
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <Input
+                    placeholder="输入客户编号后回车，例如 C001"
+                    value={customerDraft}
+                    onChange={(e) => setCustomerDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") { e.preventDefault(); handleAddCustomer() }
+                    }}
+                    className="h-8 text-sm"
+                    disabled={customerBusy}
+                  />
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={handleAddCustomer}
+                    disabled={customerBusy || !customerDraft.trim()}
+                  >
+                    绑定
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground mt-2">
+                  绑定后状态自动变为「使用中」；全部解绑后变为「备用」；停用状态不会被覆盖。销售系统会通过接口批量下发。
+                </p>
+              </CardContent>
+            </Card>
+            <Card className="bg-card border-border">
               <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">状态历史</CardTitle></CardHeader>
               <CardContent>
                 {detail.history.length === 0 ? (
@@ -1492,19 +1575,28 @@ export default function AccountsPage() {
                   <div className="relative">
                     <div className="absolute left-3 top-0 bottom-0 w-px bg-border" />
                     <div className="space-y-4">
-                      {detail.history.map((h) => (
-                        <div key={h.id} className="relative pl-8">
-                          <div className="absolute left-1.5 top-1.5 w-3 h-3 rounded-full bg-primary border-2 border-background" />
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-medium text-foreground">{ACTION_LABELS[h.action] ?? h.action}</span>
-                              {h.to_status && <Badge variant="secondary" className={cn("text-xs", STATUS_MAP[h.to_status]?.class ?? "")}>{STATUS_MAP[h.to_status]?.label ?? h.to_status}</Badge>}
+                      {detail.history.map((h) => {
+                        const isCustomer = h.action === "customer_bound" || h.action === "customer_unbound"
+                        return (
+                          <div key={h.id} className="relative pl-8">
+                            <div className="absolute left-1.5 top-1.5 w-3 h-3 rounded-full bg-primary border-2 border-background" />
+                            <div>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-sm font-medium text-foreground">{ACTION_LABELS[h.action] ?? h.action}</span>
+                                {isCustomer && h.customer_code && (
+                                  <Badge variant="secondary" className="font-mono text-xs">{h.customer_code}</Badge>
+                                )}
+                                {!isCustomer && h.to_status && (
+                                  <Badge variant="secondary" className={cn("text-xs", STATUS_MAP[h.to_status]?.class ?? "")}>{STATUS_MAP[h.to_status]?.label ?? h.to_status}</Badge>
+                                )}
+                                {h.operator && <span className="text-xs text-muted-foreground">by {h.operator}</span>}
+                              </div>
+                              <p className="text-xs text-muted-foreground mt-0.5">{new Date(h.created_at).toLocaleString("zh-CN")}</p>
+                              {h.notes && <p className="text-xs text-muted-foreground mt-1">{h.notes}</p>}
                             </div>
-                            <p className="text-xs text-muted-foreground mt-0.5">{new Date(h.created_at).toLocaleString("zh-CN")}</p>
-                            {h.notes && <p className="text-xs text-muted-foreground mt-1">{h.notes}</p>}
                           </div>
-                        </div>
-                      ))}
+                        )
+                      })}
                     </div>
                   </div>
                 )}
@@ -1717,6 +1809,17 @@ export default function AccountsPage() {
                         <Badge variant="secondary" className={cn("text-[10px] shrink-0 ml-2", STATUS_MAP[a.status]?.class ?? "")}>{STATUS_MAP[a.status]?.label ?? a.status}</Badge>
                       </div>
                       <Separator className="my-3" />
+                      <div className="flex items-center justify-between text-xs mt-1.5">
+                        <span className="text-muted-foreground">客户</span>
+                        <span className="text-foreground truncate max-w-[60%] text-right">
+                          {(a.customer_codes ?? []).length === 0
+                            ? "—"
+                            : (a.customer_codes ?? []).slice(0, 2).join("、") +
+                              ((a.customer_codes ?? []).length > 2
+                                ? ` +${(a.customer_codes ?? []).length - 2}`
+                                : "")}
+                        </span>
+                      </div>
                       <div className="flex items-center justify-between text-xs mt-1.5">
                         <span className="text-muted-foreground">创建</span>
                         <span className="text-foreground">{new Date(a.created_at).toLocaleDateString("zh-CN")}</span>
