@@ -72,7 +72,8 @@ export function useNotifications(limit = 10) {
 
 function meterKey(base: string, f?: MeteringFilters) {
   const aids = (f?.account_ids ?? []).join(",")
-  return `${base}:${f?.date_start ?? ""}:${f?.date_end ?? ""}:${f?.provider ?? ""}:${f?.product ?? ""}:${f?.account_id ?? ""}:[${aids}]:${f?.supply_source_id ?? ""}:${f?.supplier_name ?? ""}:${f?.data_source_id ?? ""}`
+  const prods = (f?.products ?? []).join(",")
+  return `${base}:${f?.date_start ?? ""}:${f?.date_end ?? ""}:${f?.provider ?? ""}:${f?.product ?? ""}:[${prods}]:${f?.account_id ?? ""}:[${aids}]:${f?.supply_source_id ?? ""}:${f?.supplier_name ?? ""}:${f?.data_source_id ?? ""}`
 }
 
 export function useMeteringSummary(filters?: MeteringFilters) {
@@ -102,7 +103,8 @@ export function useMeteringDetail(
   filters?: MeteringFilters & { page?: number; page_size?: number },
 ) {
   const aids = (filters?.account_ids ?? []).join(",")
-  const key = `meter-detail:${filters?.date_start ?? ""}:${filters?.date_end ?? ""}:${filters?.provider ?? ""}:${filters?.product ?? ""}:${filters?.account_id ?? ""}:[${aids}]:${filters?.supply_source_id ?? ""}:${filters?.supplier_name ?? ""}:${filters?.data_source_id ?? ""}:${filters?.page ?? 1}:${filters?.page_size ?? 50}`
+  const prods = (filters?.products ?? []).join(",")
+  const key = `meter-detail:${filters?.date_start ?? ""}:${filters?.date_end ?? ""}:${filters?.provider ?? ""}:${filters?.product ?? ""}:[${prods}]:${filters?.account_id ?? ""}:[${aids}]:${filters?.supply_source_id ?? ""}:${filters?.supplier_name ?? ""}:${filters?.data_source_id ?? ""}:${filters?.page ?? 1}:${filters?.page_size ?? 50}`
   return useSWR<MeteringUsageDetail[]>(key, () => meteringApi.detail(filters))
 }
 

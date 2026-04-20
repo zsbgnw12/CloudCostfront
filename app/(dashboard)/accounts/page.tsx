@@ -34,7 +34,7 @@ const STATUS_MAP: Record<string, { label: string; class: string }> = {
   suspended: { label: "已停用", class: "bg-red-500/20 text-red-400" },
   deleted: { label: "已删除", class: "bg-neutral-500/20 text-neutral-400" },
 }
-const PROVIDER_LABELS: Record<string, string> = { aws: "AWS", gcp: "GCP", azure: "Azure" }
+const PROVIDER_LABELS: Record<string, string> = { aws: "AWS", gcp: "GCP", azure: "Azure", taiji: "Taiji" }
 const ACTION_LABELS: Record<string, string> = {
   created: "创建账号",
   suspended: "停用", activated: "启用", deleted: "删除",

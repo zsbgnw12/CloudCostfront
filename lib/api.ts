@@ -797,7 +797,10 @@ export interface MeteringFilters {
   date_start?: string
   date_end?: string
   provider?: string
+  /** 服务名（单选；与 products 二选一） */
   product?: string
+  /** 服务名列表（多选；非空时优先于 product） */
+  products?: string[]
   /** 服务账号 Project.id（单选；与 account_ids 二选一） */
   account_id?: number
   /** 服务账号 Project.id 列表（多选；有值时优先于 account_id） */
@@ -816,7 +819,11 @@ function meteringQs(filters?: MeteringFilters): string {
   if (filters.date_start) qs.set("date_start", filters.date_start)
   if (filters.date_end) qs.set("date_end", filters.date_end)
   if (filters.provider) qs.set("provider", filters.provider)
-  if (filters.product) qs.set("product", filters.product)
+  if (filters.products && filters.products.length > 0) {
+    for (const p of filters.products) qs.append("products", p)
+  } else if (filters.product) {
+    qs.set("product", filters.product)
+  }
   if (filters.account_ids && filters.account_ids.length > 0) {
     for (const id of filters.account_ids) qs.append("account_ids", String(id))
   } else if (filters.account_id != null) {
@@ -875,7 +882,11 @@ export const meteringApi = {
     if (filters?.date_start) qs.set("date_start", filters.date_start)
     if (filters?.date_end) qs.set("date_end", filters.date_end)
     if (filters?.provider) qs.set("provider", filters.provider)
-    if (filters?.product) qs.set("product", filters.product)
+    if (filters?.products && filters.products.length > 0) {
+      for (const p of filters.products) qs.append("products", p)
+    } else if (filters?.product) {
+      qs.set("product", filters.product)
+    }
     if (filters?.account_ids && filters.account_ids.length > 0) {
       for (const id of filters.account_ids) qs.append("account_ids", String(id))
     } else if (filters?.account_id != null) {

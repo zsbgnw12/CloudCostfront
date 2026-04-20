@@ -26,7 +26,7 @@ const statusConfig: Record<string, { label: string; className: string }> = {
   deleted: { label: "已删除", className: "bg-muted text-muted-foreground" },
 }
 
-const PROVIDER_LABELS: Record<string, string> = { aws: "AWS", gcp: "GCP", azure: "Azure" }
+const PROVIDER_LABELS: Record<string, string> = { aws: "AWS", gcp: "GCP", azure: "Azure", taiji: "Taiji" }
 
 export default function ProjectDetailPage() {
   const params = useParams()

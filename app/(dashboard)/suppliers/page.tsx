@@ -20,8 +20,8 @@ import {
 import { suppliersApi, type SupplySourceItem, type SupplierRow } from "@/lib/api"
 import useSWR from "swr"
 
-const PROVIDER_LABELS: Record<string, string> = { aws: "AWS", gcp: "GCP", azure: "Azure" }
-const PROVIDER_ORDER = ["aws", "gcp", "azure"]
+const PROVIDER_LABELS: Record<string, string> = { aws: "AWS", gcp: "GCP", azure: "Azure", taiji: "Taiji" }
+const PROVIDER_ORDER = ["aws", "gcp", "azure", "taiji"]
 
 /** 与后端 RESERVED_UNASSIGNED_SUPPLIER_NAME 一致：GCP 未分配项目默认挂靠，不可改名/删除 */
 const RESERVED_UNASSIGNED_SUPPLIER_NAME = "未分配资源组"

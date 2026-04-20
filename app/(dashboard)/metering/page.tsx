@@ -31,7 +31,7 @@ import {
 } from "@/hooks/use-data"
 import { cn } from "@/lib/utils"
 
-const PROVIDER_LABELS: Record<string, string> = { aws: "AWS", gcp: "GCP", azure: "Azure" }
+const PROVIDER_LABELS: Record<string, string> = { aws: "AWS", gcp: "GCP", azure: "Azure", taiji: "Taiji" }
 
 const COLORS = [
   "#8b5cf6", "#3b82f6", "#06b6d4", "#10b981", "#f59e0b",
@@ -94,20 +94,21 @@ export default function MeteringPage() {
   const [supplySourceId, setSupplySourceId] = useState("__all__")
   /** 服务账号多选：空数组 = 不限（按上游供应商/货源范围） */
   const [accountIds, setAccountIds] = useState<number[]>([])
-  const [product, setProduct] = useState<string>("")
+  /** 服务多选：空数组 = 不限 */
+  const [selectedProducts, setSelectedProducts] = useState<string[]>([])
   const [page, setPage] = useState(1)
   const pageSize = 20
 
   useEffect(() => {
     setSupplySourceId("__all__")
     setAccountIds([])
-    setProduct("")
+    setSelectedProducts([])
     setPage(1)
   }, [supplierId])
 
   useEffect(() => {
     setAccountIds([])
-    setProduct("")
+    setSelectedProducts([])
     setPage(1)
   }, [supplySourceId])
 
@@ -168,16 +169,16 @@ export default function MeteringPage() {
       date_start: dateStart || undefined,
       date_end: dateEnd || undefined,
       provider: providerForMetering,
-      product: product || undefined,
+      products: selectedProducts.length > 0 ? selectedProducts : undefined,
       ...scopeExtra,
     }),
-    [dateStart, dateEnd, providerForMetering, product, scopeExtra],
+    [dateStart, dateEnd, providerForMetering, selectedProducts, scopeExtra],
   )
 
   const { data: summary, isLoading: summaryLoading } = useMeteringSummary(filters)
   const { data: daily = [] } = useMeteringDaily(filters)
   const { data: byService = [] } = useMeteringByService(filters)
-  const { data: products = [] } = useMeteringProducts(providerForMetering || undefined, scopeExtra)
+  const { data: productOptions = [] } = useMeteringProducts(providerForMetering || undefined, scopeExtra)
   const { data: detail = [] } = useMeteringDetail({ ...filters, page, page_size: pageSize })
   const { data: countData } = useMeteringDetailCount(filters)
   const totalCount = countData?.total ?? 0
@@ -321,24 +322,28 @@ export default function MeteringPage() {
                 value={accountIds.map(String)}
                 onChange={(next) => {
                   setAccountIds(next.map(Number))
-                  setProduct("")
+                  setSelectedProducts([])
                   setPage(1)
                 }}
               />
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">服务</Label>
-              <Select value={product} onValueChange={(v) => { setProduct(v === "all" ? "" : v); setPage(1) }}>
-                <SelectTrigger className="h-8 w-52 text-sm"><SelectValue placeholder="全部服务" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">全部服务</SelectItem>
-                  {products.map((p) => (
-                    <SelectItem key={p.product} value={p.product}>
-                      {p.product}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <MultiSelect
+                triggerClassName="h-8 w-52 text-sm"
+                placeholder="全部服务"
+                searchPlaceholder="搜索服务"
+                emptyText="无可选服务"
+                options={productOptions.map((p) => ({
+                  value: p.product,
+                  label: p.product,
+                })) satisfies MultiSelectOption[]}
+                value={selectedProducts}
+                onChange={(next) => {
+                  setSelectedProducts(next)
+                  setPage(1)
+                }}
+              />
             </div>
             <div className="flex items-center gap-1 pb-0.5">
               <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => quickRange(7)}>近7天</Button>
