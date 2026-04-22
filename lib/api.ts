@@ -336,6 +336,20 @@ export const accountsApi = {
     customer_codes?: string[]
   }) =>
     request<ServiceAccountDetail>(`/api/service-accounts/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+
+  /**
+   * 批量把服务账号迁到另一个货源下。
+   * 规则：跨 provider 禁止；已在目标货源下的账号跳过。
+   * 返回 { moved: 成功数, skipped: [{account_id, reason}], target_* }
+   */
+  bulkAssign: (data: { account_ids: number[]; target_supply_source_id: number }) =>
+    request<{
+      moved: number
+      skipped: { account_id: number; reason: string }[]
+      target_supply_source_id: number
+      target_provider: string
+      target_supplier_name: string
+    }>("/api/service-accounts/bulk-assign", { method: "POST", body: JSON.stringify(data) }),
   suspend: (id: number) =>
     request<ServiceAccountDetail>(`/api/service-accounts/${id}/suspend`, { method: "POST" }),
   activate: (id: number) =>

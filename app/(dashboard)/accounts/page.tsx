@@ -18,6 +18,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   accountsApi, azureConsentApi,
   type ServiceAccount, type ServiceAccountDetail, type HistoryItem, type SupplySourceItem,
@@ -856,6 +857,75 @@ export default function AccountsPage() {
   const handleSelectGroup = (supplierName: string, supplySourceId: number, provider: string) => {
     setSelectedGroup({ supplierName, supplySourceId, provider })
     setSelectedId(null); setDetail(null); setShowCreds(false); setCreds(null)
+    setBulkSelectedIds(new Set())  // 切货源时清空批量选择
+  }
+
+  // ─── 批量分配服务账号到另一个货源 ─────────────────────
+  const [bulkSelectedIds, setBulkSelectedIds] = useState<Set<number>>(new Set())
+  const [bulkDialogOpen, setBulkDialogOpen] = useState(false)
+  const [bulkTargetSupplierId, setBulkTargetSupplierId] = useState<string>("")
+  const [bulkTargetSSId, setBulkTargetSSId] = useState<string>("")
+  const [bulkSubmitting, setBulkSubmitting] = useState(false)
+
+  const toggleBulkPick = (id: number) => {
+    setBulkSelectedIds((s) => {
+      const n = new Set(s)
+      if (n.has(id)) n.delete(id); else n.add(id)
+      return n
+    })
+  }
+
+  // 已选账号的 provider 集合；只有单一 provider 才能分配（跨 provider 禁）
+  const bulkProviders = useMemo(() => {
+    const ps = new Set<string>()
+    for (const id of bulkSelectedIds) {
+      const a = accounts.find((x) => x.id === id)
+      if (a) ps.add(a.provider)
+    }
+    return ps
+  }, [bulkSelectedIds, accounts])
+
+  const bulkSingleProvider = bulkProviders.size === 1 ? Array.from(bulkProviders)[0] : null
+
+  // 弹窗里目标货源候选：按"目标供应商"+"源账号 provider"过滤
+  const bulkTargetSSCandidates = useMemo(() => {
+    if (!bulkTargetSupplierId || !bulkSingleProvider) return []
+    const supId = Number(bulkTargetSupplierId)
+    return sources.filter(
+      (s) => s.supplier_id === supId
+        && s.provider === bulkSingleProvider
+        && s.id !== selectedGroup?.supplySourceId  // 禁选当前货源
+    )
+  }, [bulkTargetSupplierId, bulkSingleProvider, sources, selectedGroup])
+
+  const openBulkDialog = () => {
+    setBulkTargetSupplierId("")
+    setBulkTargetSSId("")
+    setBulkDialogOpen(true)
+  }
+
+  const submitBulkAssign = async () => {
+    if (!bulkTargetSSId || bulkSelectedIds.size === 0) return
+    setBulkSubmitting(true)
+    try {
+      const r = await accountsApi.bulkAssign({
+        account_ids: Array.from(bulkSelectedIds),
+        target_supply_source_id: Number(bulkTargetSSId),
+      })
+      let msg = `已迁移 ${r.moved} 个到「${r.target_supplier_name} / ${r.target_provider.toUpperCase()}」`
+      if (r.skipped.length > 0) {
+        msg += `；跳过 ${r.skipped.length} 个（${r.skipped.map((s) => `#${s.account_id}:${s.reason}`).join("；")}）`
+      }
+      alert(msg)
+      setBulkDialogOpen(false)
+      setBulkSelectedIds(new Set())
+      // 触发账号列表刷新
+      await mutateAccounts()
+    } catch (e) {
+      alert(`批量分配失败：${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setBulkSubmitting(false)
+    }
   }
 
   const handleBackToCards = () => {
@@ -1790,16 +1860,41 @@ export default function AccountsPage() {
                 </div>
                 <p className="text-sm text-muted-foreground mt-2">{groupAccounts.length} 个服务账号</p>
               </div>
+              {/* 批量分配工具栏：有选中账号时显示 */}
+              {bulkSelectedIds.size > 0 && (
+                <div className="flex items-center gap-3 bg-card border border-primary/50 rounded-lg px-3 py-2">
+                  <span className="text-sm text-foreground">已选 <b className="text-primary">{bulkSelectedIds.size}</b> 个</span>
+                  <Button size="sm" onClick={openBulkDialog}>批量分配到…</Button>
+                  <Button size="sm" variant="ghost" onClick={() => setBulkSelectedIds(new Set())}>清空</Button>
+                </div>
+              )}
             </div>
             {groupAccounts.length === 0 ? (
               <div className="flex items-center justify-center py-20 text-muted-foreground"><div className="text-center"><KeyRound className="w-12 h-12 mx-auto mb-4 opacity-30" /><p>该云货源下暂无服务账号</p></div></div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                 {groupAccounts.map((a) => (
-                  <Card key={a.id} className="bg-card border-border hover:border-primary/50 transition-colors cursor-pointer group" onClick={() => loadDetail(a.id)}>
+                  <Card
+                    key={a.id}
+                    className={cn(
+                      "bg-card border-border hover:border-primary/50 transition-colors cursor-pointer group",
+                      bulkSelectedIds.has(a.id) && "ring-2 ring-primary"
+                    )}
+                    onClick={() => loadDetail(a.id)}
+                  >
                     <CardContent className="p-4">
                       <div className="flex items-start justify-between">
                         <div className="flex items-center gap-3 min-w-0">
+                          {/* 批量勾选：点这个不会打开详情 */}
+                          <div
+                            onClick={(e) => { e.stopPropagation(); toggleBulkPick(a.id) }}
+                            className="shrink-0 flex items-center"
+                          >
+                            <Checkbox
+                              checked={bulkSelectedIds.has(a.id)}
+                              aria-label={`选择 ${a.name}`}
+                            />
+                          </div>
                           <img src={`/${a.provider}.svg`} alt={a.provider} className="w-9 h-9 shrink-0" />
                           <div className="min-w-0">
                             <p className="text-sm font-medium text-foreground truncate">{a.name}</p>
@@ -1832,6 +1927,79 @@ export default function AccountsPage() {
           </div>
         )}
       </div>
+
+      {/* ─── 批量分配服务账号到另一个货源 ─── */}
+      <Dialog open={bulkDialogOpen} onOpenChange={setBulkDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>批量分配服务账号</DialogTitle>
+            <DialogDescription>
+              已选 <b>{bulkSelectedIds.size}</b> 个账号
+              {bulkSingleProvider && (
+                <>
+                  ，云类型 <Badge variant="secondary" className="ml-1">{PROVIDER_LABELS[bulkSingleProvider] ?? bulkSingleProvider.toUpperCase()}</Badge>
+                </>
+              )}
+              。选择目标供应商和货源（只能选同 provider）。
+            </DialogDescription>
+          </DialogHeader>
+
+          {!bulkSingleProvider ? (
+            <div className="py-4 text-sm text-destructive">
+              所选账号涉及多个 provider，请只选同一 provider 的账号。
+            </div>
+          ) : (
+            <div className="space-y-3 py-2">
+              <div className="space-y-1.5">
+                <Label>目标供应商</Label>
+                <Select value={bulkTargetSupplierId} onValueChange={(v) => { setBulkTargetSupplierId(v); setBulkTargetSSId("") }}>
+                  <SelectTrigger><SelectValue placeholder="选择供应商" /></SelectTrigger>
+                  <SelectContent>
+                    {Array.from(
+                      sources.reduce((m, s) => m.set(s.supplier_id, s.supplier_name ?? "—"), new Map<number, string>()),
+                      ([id, name]) => (
+                        <SelectItem key={id} value={String(id)}>{name}</SelectItem>
+                      )
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label>目标货源（{bulkSingleProvider.toUpperCase()}）</Label>
+                <Select
+                  value={bulkTargetSSId}
+                  onValueChange={setBulkTargetSSId}
+                  disabled={!bulkTargetSupplierId}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder={bulkTargetSupplierId ? "选择货源" : "先选供应商"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {bulkTargetSSCandidates.length === 0 ? (
+                      <div className="px-3 py-2 text-xs text-muted-foreground">该供应商下没有 {bulkSingleProvider} 货源</div>
+                    ) : bulkTargetSSCandidates.map((s) => (
+                      <SelectItem key={s.id} value={String(s.id)}>
+                        #{s.id} · {PROVIDER_LABELS[s.provider] ?? s.provider.toUpperCase()}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBulkDialogOpen(false)} disabled={bulkSubmitting}>取消</Button>
+            <Button
+              onClick={submitBulkAssign}
+              disabled={!bulkSingleProvider || !bulkTargetSSId || bulkSubmitting}
+            >
+              {bulkSubmitting ? "分配中…" : "确认分配"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
