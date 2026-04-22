@@ -1860,13 +1860,36 @@ export default function AccountsPage() {
                 </div>
                 <p className="text-sm text-muted-foreground mt-2">{groupAccounts.length} 个服务账号</p>
               </div>
-              {/* 批量分配工具栏：有选中账号时显示 */}
-              {bulkSelectedIds.size > 0 && (
-                <div className="flex items-center gap-3 bg-card border border-primary/50 rounded-lg px-3 py-2">
-                  <span className="text-sm text-foreground">已选 <b className="text-primary">{bulkSelectedIds.size}</b> 个</span>
-                  <Button size="sm" onClick={openBulkDialog}>批量分配到…</Button>
-                  <Button size="sm" variant="ghost" onClick={() => setBulkSelectedIds(new Set())}>清空</Button>
-                </div>
+              {/* 批量分配工具栏：永久可见，无选中时是"提示 + 全选"，有选中时切换成"已选 N + 操作" */}
+              {groupAccounts.length > 0 && (
+                bulkSelectedIds.size === 0 ? (
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground bg-card/60 border border-dashed border-border rounded-lg px-3 py-2">
+                    <span>💡 勾选左上角方框可批量分配</span>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 text-xs"
+                      onClick={() => setBulkSelectedIds(new Set(groupAccounts.map((a) => a.id)))}
+                    >
+                      全选本页
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-3 bg-card border border-primary/50 rounded-lg px-3 py-2">
+                    <span className="text-sm text-foreground">已选 <b className="text-primary">{bulkSelectedIds.size}</b> 个</span>
+                    <Button size="sm" onClick={openBulkDialog}>批量分配到…</Button>
+                    {bulkSelectedIds.size < groupAccounts.length && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setBulkSelectedIds(new Set(groupAccounts.map((a) => a.id)))}
+                      >
+                        全选本页
+                      </Button>
+                    )}
+                    <Button size="sm" variant="ghost" onClick={() => setBulkSelectedIds(new Set())}>清空</Button>
+                  </div>
+                )
               )}
             </div>
             {groupAccounts.length === 0 ? (
@@ -1885,14 +1908,16 @@ export default function AccountsPage() {
                     <CardContent className="p-4">
                       <div className="flex items-start justify-between">
                         <div className="flex items-center gap-3 min-w-0">
-                          {/* 批量勾选：点这个不会打开详情 */}
+                          {/* 批量勾选：点这个不会打开详情；加大 + 强色边框让视觉明显 */}
                           <div
                             onClick={(e) => { e.stopPropagation(); toggleBulkPick(a.id) }}
-                            className="shrink-0 flex items-center"
+                            className="shrink-0 flex items-center p-1 -m-1 rounded hover:bg-accent/50 cursor-pointer"
+                            title="勾选以批量分配"
                           >
                             <Checkbox
                               checked={bulkSelectedIds.has(a.id)}
                               aria-label={`选择 ${a.name}`}
+                              className="size-5 border-2 border-muted-foreground/60 data-[state=checked]:border-primary"
                             />
                           </div>
                           <img src={`/${a.provider}.svg`} alt={a.provider} className="w-9 h-9 shrink-0" />
