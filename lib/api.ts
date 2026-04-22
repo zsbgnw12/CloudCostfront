@@ -20,10 +20,52 @@ function redirectToLogin() {
   window.location.href = `${API_BASE}/api/auth/login?redirect=true`
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 30000) // 30s timeout
+/**
+ * 并发请求共享同一次 refresh —— 避免多个 API 同时 401 时重复调 /auth/refresh。
+ * 注意：refresh 无副作用（幂等），即使并发多次也不会把会话搞坏，
+ * 但单例仍能减少 1 次往返 + 避免 refresh-session 表瞬时多行。
+ */
+let _refreshingPromise: Promise<boolean> | null = null
 
+async function tryRefresh(): Promise<boolean> {
+  if (_refreshingPromise) return _refreshingPromise
+  _refreshingPromise = (async () => {
+    try {
+      const ctrl = new AbortController()
+      const to = setTimeout(() => ctrl.abort(), 15000)
+      const res = await fetch(`${API_BASE}/api/auth/refresh`, {
+        method: "POST",
+        credentials: "include",
+        signal: ctrl.signal,
+      })
+      clearTimeout(to)
+      return res.ok
+    } catch {
+      return false
+    } finally {
+      // 释放单例，下一次 401 如果再过期还能触发新的 refresh
+      setTimeout(() => { _refreshingPromise = null }, 0)
+    }
+  })()
+  return _refreshingPromise
+}
+
+async function doFetch(url: string, restInit: RequestInit, headers: Record<string, string>): Promise<Response> {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 30000)
+  try {
+    return await fetch(url, {
+      ...restInit,
+      headers,
+      credentials: "include",
+      signal: controller.signal,
+    })
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const { headers: extraHeaders, ...restInit } = init ?? {}
   const url = path.startsWith("http") ? path : `${API_BASE}${path}`
   const headers: Record<string, string> = {
@@ -33,26 +75,33 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (restInit.body != null) {
     headers["Content-Type"] = "application/json"
   }
-  try {
-    const res = await fetch(url, {
-      ...restInit,
-      headers,
-      credentials: "include",
-      signal: controller.signal,
-    })
+
+  // /api/auth/refresh 本身 401 不要再递归刷新，直接跳登录
+  const isRefreshCall = path === "/api/auth/refresh"
+
+  let res = await doFetch(url, restInit, headers)
+
+  if (res.status === 401 && !isRefreshCall) {
+    // 试一次 refresh，成功了用同样的参数重试原请求
+    const refreshed = await tryRefresh()
+    if (refreshed) {
+      res = await doFetch(url, restInit, headers)
+    }
     if (res.status === 401) {
       redirectToLogin()
-      throw new Error("API 401: redirecting to login")
+      throw new Error("API 401 after refresh attempt: redirecting to login")
     }
-    if (!res.ok) {
-      const body = await res.text().catch(() => "")
-      throw new Error(`API ${res.status}: ${body}`)
-    }
-    if (res.status === 204) return undefined as T
-    return res.json()
-  } finally {
-    clearTimeout(timeout)
+  } else if (res.status === 401) {
+    redirectToLogin()
+    throw new Error("API 401: redirecting to login")
   }
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => "")
+    throw new Error(`API ${res.status}: ${body}`)
+  }
+  if (res.status === 204) return undefined as T
+  return res.json()
 }
 
 // ─── Service Account Types ────────────────────────────────────
