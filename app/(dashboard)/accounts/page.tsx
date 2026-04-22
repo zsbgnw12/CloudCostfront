@@ -5,7 +5,7 @@ import {
   ChevronRight, ChevronDown, FolderOpen, Plus, MoreHorizontal,
   KeyRound, Pause, Play, Trash2, Eye, EyeOff, Pencil,
   Loader2, ArrowLeft, Building2,
-  Link2, Copy, CheckCircle2, AlertTriangle, Clock,
+  Link2, Copy, CheckCircle2, AlertTriangle, Clock, ExternalLink,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -470,16 +470,20 @@ const emptyInviteState: AzureInviteState = {
 /** Azure Tab A「链接接入」渲染体 */
 function AzureInviteSection({
   accountName,
+  supplySourceId,
   state,
   onStateChange,
 }: {
   accountName: string
+  /** 外层已选的 Azure 货源 id（字符串，空即未选）。verify 后订阅会自动挂到此货源下 */
+  supplySourceId?: string
   state: AzureInviteState
   onStateChange: (patch: Partial<AzureInviteState>) => void
 }) {
   const [copied, setCopied] = useState(false)
 
-  const canGenerate = accountName.trim().length > 0 && !state.starting && !state.invite
+  const ssIdNum = supplySourceId ? Number(supplySourceId) : null
+  const canGenerate = accountName.trim().length > 0 && !state.starting && !state.invite && !!ssIdNum
 
   const handleGenerate = async () => {
     if (!canGenerate) return
@@ -487,6 +491,7 @@ function AzureInviteSection({
     try {
       const resp: AzureConsentStartResponse = await azureConsentApi.start({
         account_name: accountName.trim(),
+        supply_source_id: ssIdNum,
       })
       // 后端从 list 接口取回以同步 id（start 响应里没给 id）
       const all = await azureConsentApi.listInvites()
@@ -603,6 +608,15 @@ function AzureInviteSection({
           {!accountName.trim() && (
             <p className="text-[11px] text-muted-foreground">请先在上方填写"显示名称"</p>
           )}
+          {accountName.trim() && !ssIdNum && (
+            <p className="text-[11px] text-amber-400">请先在上方选择"供应商"和"云（货源）"</p>
+          )}
+          {accountName.trim() && ssIdNum && (
+            <p className="text-[11px] text-muted-foreground text-center">
+              客户同意并分配 Cost Management Reader 后，点"验证订阅"，<br/>
+              <b>该租户下所有订阅会自动建成服务账号，挂到你上面选的货源下</b>。
+            </p>
+          )}
         </div>
       ) : (
         <div className="space-y-3">
@@ -614,18 +628,54 @@ function AzureInviteSection({
           </div>
 
           <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground">授权链接（发送给客户）</Label>
-            <div className="flex gap-2">
-              <Input
+            <Label className="text-xs text-muted-foreground">
+              授权链接（发送给客户）
+              <span className="ml-2 text-[10px] text-muted-foreground/70">
+                长度 {state.invite.consent_url?.length ?? 0} 字符
+              </span>
+            </Label>
+            <div className="flex gap-2 items-start">
+              <Textarea
                 readOnly
                 value={state.invite.consent_url}
-                className={cn("font-mono text-[11px] h-9", CTRL_SURFACE)}
-                onClick={(e) => (e.target as HTMLInputElement).select()}
+                rows={3}
+                className={cn(
+                  "font-mono text-[11px] leading-snug resize-none break-all whitespace-pre-wrap",
+                  CTRL_SURFACE
+                )}
+                onClick={(e) => (e.target as HTMLTextAreaElement).select()}
               />
-              <Button type="button" variant="outline" size="sm" onClick={handleCopy}>
-                {copied ? <CheckCircle2 className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
-              </Button>
+              <div className="flex flex-col gap-1.5 shrink-0">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 px-2"
+                  onClick={handleCopy}
+                  title={copied ? "已复制" : "复制链接"}
+                >
+                  {copied ? (
+                    <><CheckCircle2 className="w-4 h-4 text-green-400 mr-1" /><span className="text-[11px]">已复制</span></>
+                  ) : (
+                    <><Copy className="w-4 h-4 mr-1" /><span className="text-[11px]">复制</span></>
+                  )}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 px-2"
+                  onClick={() => state.invite && window.open(state.invite.consent_url, "_blank", "noopener,noreferrer")}
+                  title="在新标签打开此链接（自测用）"
+                >
+                  <ExternalLink className="w-4 h-4 mr-1" />
+                  <span className="text-[11px]">打开</span>
+                </Button>
+              </div>
             </div>
+            <p className="text-[10px] text-muted-foreground/70">
+              点"复制"后直接发给客户即可；"打开"按钮仅用于自测链接是否有效。
+            </p>
           </div>
 
           <div className="space-y-1.5">
@@ -1438,6 +1488,7 @@ export default function AccountsPage() {
                   inviteSection={
                     <AzureInviteSection
                       accountName={form.name}
+                      supplySourceId={form.supply_source_id}
                       state={inviteState}
                       onStateChange={patchInviteState}
                     />

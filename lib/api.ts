@@ -1016,7 +1016,7 @@ export interface AzureConsentInvite {
 }
 
 export const azureConsentApi = {
-  start: (body: { account_name: string }) =>
+  start: (body: { account_name: string; supply_source_id?: number | null }) =>
     request<AzureConsentStartResponse>("/api/azure-consent/start", {
       method: "POST",
       body: JSON.stringify(body),
