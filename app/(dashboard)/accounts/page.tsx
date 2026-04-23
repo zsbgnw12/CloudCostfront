@@ -60,12 +60,20 @@ const ORDER_METHOD_SELECT_SENTINEL = "__none__"
 /** 弹窗内输入/选择：与浅色区块底区分，避免与背景糊成一片 */
 const CTRL_SURFACE = "bg-background border border-input shadow-sm dark:bg-background/95"
 
-/** 与后端 suspend/activate 允许的状态一致 */
+/** 按钮可见性（业务语义）
+ * 状态是纯人工切换，和客户编号无关。只隐藏"当前已经是这个状态"的按钮：
+ * - 使用中：可"停用"、"置为备用"
+ * - 备用：可"启用"(→使用中)、"停用"
+ * - 已停用：可"启用"(→使用中)、"置为备用"
+ */
 function canSuspendStatus(s: string) {
-  return s === "active" || s === "standby"
+  return s !== "inactive"
 }
 function canActivateStatus(s: string) {
-  return s === "inactive" || s === "standby"
+  return s !== "active"
+}
+function canStandbyStatus(s: string) {
+  return s !== "standby"
 }
 
 const AZURE_CRED_JSON_PLACEHOLDER = `{
@@ -1149,14 +1157,15 @@ export default function AccountsPage() {
     finally { setActionLoading(null) }
   }
 
-  const handleAction = async (action: "suspend" | "activate") => {
+  const handleAction = async (action: "suspend" | "activate" | "standby") => {
     if (!selectedId) return
-    const labels = { suspend: "停用", activate: "启用" }
+    const labels = { suspend: "停用", activate: "启用", standby: "置为备用" }
     if (!confirm(`确定${labels[action]}此账号？`)) return
     try {
       setActionLoading(action)
       if (action === "suspend") await accountsApi.suspend(selectedId)
       else if (action === "activate") await accountsApi.activate(selectedId)
+      else if (action === "standby") await accountsApi.standby(selectedId)
       await load(); await loadDetail(selectedId)
     } catch (e) { alert(`操作失败: ${e instanceof Error ? e.message : e}`) }
     finally { setActionLoading(null) }
@@ -1595,6 +1604,11 @@ export default function AccountsPage() {
                   {canActivateStatus(detail.status) && (
                     <DropdownMenuItem onClick={() => handleAction("activate")} disabled={!!actionLoading}>
                       <Play className="w-4 h-4 mr-2" />启用
+                    </DropdownMenuItem>
+                  )}
+                  {canStandbyStatus(detail.status) && (
+                    <DropdownMenuItem onClick={() => handleAction("standby")} disabled={!!actionLoading}>
+                      <Clock className="w-4 h-4 mr-2" />置为备用
                     </DropdownMenuItem>
                   )}
                   {canSuspendStatus(detail.status) && (

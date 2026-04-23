@@ -354,6 +354,8 @@ export const accountsApi = {
     request<ServiceAccountDetail>(`/api/service-accounts/${id}/suspend`, { method: "POST" }),
   activate: (id: number) =>
     request<ServiceAccountDetail>(`/api/service-accounts/${id}/activate`, { method: "POST" }),
+  standby: (id: number) =>
+    request<ServiceAccountDetail>(`/api/service-accounts/${id}/standby`, { method: "POST" }),
   delete: (id: number) =>
     request<void>(`/api/service-accounts/${id}`, { method: "DELETE" }),
   hardDelete: (id: number) =>
