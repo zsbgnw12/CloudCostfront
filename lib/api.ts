@@ -566,6 +566,27 @@ export const billingApi = {
     const q = qs.toString()
     return request<BillingDetail[]>(`/api/billing/detail${q ? `?${q}` : ""}`)
   },
+  /**
+   * 全量字段 CSV 导出（29 列），用于程序对接 + 内部对账。
+   * 列对照见后端 app/api/billing.py 的 _CSV_HEADER_FULL。
+   * 浏览器导航直接触发文件下载，认证走 cookie。
+   */
+  exportFullUrl: (params: {
+    date_start: string
+    date_end: string
+    provider?: string
+    project_id?: string
+    product?: string
+  }) => {
+    const qs = new URLSearchParams({
+      date_start: params.date_start,
+      date_end: params.date_end,
+    })
+    if (params.provider) qs.set("provider", params.provider)
+    if (params.project_id) qs.set("project_id", params.project_id)
+    if (params.product) qs.set("product", params.product)
+    return `${API_BASE}/api/billing/export-full?${qs}`
+  },
 }
 
 // ─── Azure Deploy Types ──────────────────────────────────────

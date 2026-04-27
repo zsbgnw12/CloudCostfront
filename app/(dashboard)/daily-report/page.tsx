@@ -15,7 +15,7 @@ import {
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table"
-import { accountsApi, type DailyReportRow, type CostSummary } from "@/lib/api"
+import { accountsApi, billingApi, type DailyReportRow, type CostSummary } from "@/lib/api"
 import { useAccounts, useSuppliers, useSupplySourcesAll } from "@/hooks/use-data"
 import { cn } from "@/lib/utils"
 
@@ -302,6 +302,19 @@ export default function DailyReportPage() {
     window.open(url, "_blank")
   }
 
+  // 全量字段 CSV：直接从 billing_data 表逐行导出（29 列），用于程序对接 + 内部对账。
+  // 和"导出 Excel"日报表的区别：日报表是按 (账号 × 日期 × 服务) 聚合的报表视图；
+  // 这个是 SKU/region 级 raw 明细，包含 service_id/sku_id/cost_at_list/credits_breakdown/
+  // billing_account_id/invoice_month/transaction_type 等所有 BQ 原始字段。
+  const handleExportFullCsv = () => {
+    const url = billingApi.exportFullUrl({
+      date_start: dateRange.start,
+      date_end: dateRange.end,
+      provider: providerForApi,
+    })
+    window.open(url, "_blank")
+  }
+
   const sortedSourcesInScope = useMemo(
     () =>
       [...sourcesInScope].sort((a, b) => {
@@ -332,9 +345,20 @@ export default function DailyReportPage() {
             筛选顺序：供应商 → 货源 → 服务账号（可多选）。同一套筛选用于日报透视、费用构成与使用明细；未勾选账号时费用取当前列表第一个账号，勾选多个时取首个已选。
           </p>
         </div>
-        <Button onClick={handleExportAll} disabled={filteredRows.length === 0 || loading} className="gap-2">
-          <Download className="w-4 h-4" />导出 Excel
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button onClick={handleExportAll} disabled={filteredRows.length === 0 || loading} className="gap-2">
+            <Download className="w-4 h-4" />导出 Excel
+          </Button>
+          <Button
+            onClick={handleExportFullCsv}
+            disabled={loading}
+            variant="outline"
+            className="gap-2"
+            title="按当前日期 + 供应商筛选导出 SKU/region 级原始明细 CSV，含 BQ 全部字段（service_id, sku_id, cost_at_list, credits_breakdown, billing_account_id, invoice_month 等共 29 列）。给程序对接 + 内部对账用。"
+          >
+            <FileSpreadsheet className="w-4 h-4" />全量导出 CSV
+          </Button>
+        </div>
       </div>
 
       {/* 筛选 */}
