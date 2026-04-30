@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from "react"
 import { TrendingUp, TrendingDown, FolderKanban, KeyRound } from "lucide-react"
+import { useTheme } from "next-themes"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
@@ -13,6 +14,23 @@ import {
 } from "recharts"
 import { useAccounts, useDashboardBundle } from "@/hooks/use-data"
 import type { DashboardTrendPoint, DashboardProviderSlice } from "@/lib/api"
+
+/** Recharts SVG 不吃 Tailwind className,只能传 stroke / fill 字面色。
+ *  这里按主题返回一组与 design tokens 视觉等价的颜色。 */
+function useChartTheme() {
+  const { resolvedTheme } = useTheme()
+  const dark = resolvedTheme !== "light"  // SSR / 默认走 dark
+  return {
+    axis: dark ? "rgba(255,255,255,0.55)" : "rgba(0,0,0,0.55)",
+    axisStrong: dark ? "rgba(255,255,255,0.85)" : "rgba(0,0,0,0.75)",
+    grid: dark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)",
+    tooltipBg: dark ? "rgba(20,20,20,0.92)" : "rgba(255,255,255,0.96)",
+    tooltipBorder: dark ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.12)",
+    tooltipText: dark ? "#fafafa" : "#1a1a1a",
+    tooltipText2: dark ? "#e4e4e7" : "#3f3f46",
+    cursor: dark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.05)",
+  }
+}
 
 const COLORS = ["#e8854a", "#5b8def", "#4ade80", "#eab308", "#d946ef", "#14b8a6", "#ef4444", "#818cf8", "#84cc16", "#38bdf8"]
 function fmt(v: number) { return `$${Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` }
@@ -32,6 +50,7 @@ export default function DashboardPage() {
   const defaultMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`
   const [month, setMonth] = useState(defaultMonth)
   const monthOptions = getMonthOptions()
+  const ct = useChartTheme()
 
   const { data: dash, isLoading: dashLoading } = useDashboardBundle(month, { service_limit: 10 })
   const overview = dash?.overview
@@ -137,14 +156,14 @@ export default function DashboardPage() {
                         <stop offset="95%" stopColor="var(--chart-1)" stopOpacity={0.1}/>
                       </linearGradient>
                     </defs>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255,255,255,0.05)" />
-                    <XAxis dataKey="date" stroke="rgba(255,255,255,0.4)" fontSize={12} tickLine={false} axisLine={false} tickMargin={10} />
-                    <YAxis stroke="rgba(255,255,255,0.4)" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(v) => `$${v}`} tickMargin={10} />
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={ct.grid} />
+                    <XAxis dataKey="date" stroke={ct.axis} fontSize={12} tickLine={false} axisLine={false} tickMargin={10} />
+                    <YAxis stroke={ct.axis} fontSize={12} tickLine={false} axisLine={false} tickFormatter={(v) => `$${v}`} tickMargin={10} />
                     <Tooltip
-                      cursor={{ fill: "rgba(255,255,255,0.03)" }}
-                      contentStyle={{ backgroundColor: "rgba(20,20,20,0.92)", backdropFilter: "blur(12px)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: "12px", boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}
-                      labelStyle={{ color: "#fafafa" }}
-                      itemStyle={{ color: "#e4e4e7" }}
+                      cursor={{ fill: ct.cursor }}
+                      contentStyle={{ backgroundColor: ct.tooltipBg, backdropFilter: "blur(12px)", border: `1px solid ${ct.tooltipBorder}`, borderRadius: "12px", boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}
+                      labelStyle={{ color: ct.tooltipText }}
+                      itemStyle={{ color: ct.tooltipText2 }}
                       formatter={(v: number) => [fmt(v), "日消费"]}
                     />
                     <Bar dataKey="cost" fill="url(#colorCost)" radius={[4, 4, 0, 0]} maxBarSize={40} />
@@ -170,9 +189,9 @@ export default function DashboardPage() {
                         {(byProvider ?? []).map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
                       </Pie>
                       <Tooltip
-                        contentStyle={{ backgroundColor: "rgba(20,20,20,0.92)", backdropFilter: "blur(12px)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: "12px", boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}
-                        labelStyle={{ color: "#fafafa" }}
-                        itemStyle={{ color: "#e4e4e7" }}
+                        contentStyle={{ backgroundColor: ct.tooltipBg, backdropFilter: "blur(12px)", border: `1px solid ${ct.tooltipBorder}`, borderRadius: "12px", boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}
+                        labelStyle={{ color: ct.tooltipText }}
+                        itemStyle={{ color: ct.tooltipText2 }}
                         formatter={(v: number) => [fmt(v), "费用"]}
                       />
                     </PieChart>
@@ -214,14 +233,14 @@ export default function DashboardPage() {
                         <stop offset="100%" stopColor="var(--chart-4)" stopOpacity={1}/>
                       </linearGradient>
                     </defs>
-                  <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="rgba(255,255,255,0.05)" />
-                  <XAxis type="number" stroke="rgba(255,255,255,0.4)" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(v) => `$${v}`} />
-                  <YAxis type="category" dataKey="product" stroke="rgba(255,255,255,0.8)" fontSize={12} tickLine={false} axisLine={false} width={160} tickMargin={10} />
+                  <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke={ct.grid} />
+                  <XAxis type="number" stroke={ct.axis} fontSize={12} tickLine={false} axisLine={false} tickFormatter={(v) => `$${v}`} />
+                  <YAxis type="category" dataKey="product" stroke={ct.axisStrong} fontSize={12} tickLine={false} axisLine={false} width={160} tickMargin={10} />
                   <Tooltip
-                    cursor={{ fill: "rgba(255,255,255,0.03)" }}
-                    contentStyle={{ backgroundColor: "rgba(20,20,20,0.92)", backdropFilter: "blur(12px)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: "12px", boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}
-                    labelStyle={{ color: "#fafafa" }}
-                    itemStyle={{ color: "#e4e4e7" }}
+                    cursor={{ fill: ct.cursor }}
+                    contentStyle={{ backgroundColor: ct.tooltipBg, backdropFilter: "blur(12px)", border: `1px solid ${ct.tooltipBorder}`, borderRadius: "12px", boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}
+                    labelStyle={{ color: ct.tooltipText }}
+                    itemStyle={{ color: ct.tooltipText2 }}
                     formatter={(v: number) => [fmt(v), "费用"]}
                   />
                   <Bar dataKey="cost" fill="url(#colorTop)" radius={[0, 4, 4, 0]} />
