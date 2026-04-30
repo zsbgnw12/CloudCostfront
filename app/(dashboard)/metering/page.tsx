@@ -645,7 +645,7 @@ function SummaryCard({
   title, icon: Icon, value, sub, color,
 }: {
   title: string
-  icon: React.ComponentType<{ className?: string }>
+  icon: React.ComponentType<{ className?: string; strokeWidth?: number }>
   value: string
   sub?: string
   color: string

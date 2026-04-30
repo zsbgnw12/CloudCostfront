@@ -23,7 +23,11 @@ const THRESHOLD_LABELS: Record<string, string> = {
   monthly_budget: "月预算超限",
   daily_increase_pct: "日增长率超限",
   monthly_minimum_commitment: "月最低承诺用量",
+  account_count_quota: "服务账号配额(达 90% 触发)",
 }
+
+/** 服务账号配额告警 — 触发百分比硬编码 90%(后端 alert_service.py 也用同一常量)。 */
+const ACCOUNT_QUOTA_TRIGGER_PCT = 90
 
 const fmt = (v: number) => `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
@@ -45,6 +49,8 @@ export default function AlertsPage() {
     threshold_value: "",
     notify_webhook: "",
     notify_email: "",
+    // 仅 account_count_quota 用:范围 "all" | "aws" | "gcp" | "azure" | "taiji"
+    account_count_scope: "all",
   })
   const [actionLoading, setActionLoading] = useState<string | null>(null)
 
@@ -89,6 +95,7 @@ export default function AlertsPage() {
       threshold_value: "",
       notify_webhook: "",
       notify_email: "",
+      account_count_scope: "all",
     })
 
   const selectedAccountName = (targetId: string | null) => {
@@ -100,11 +107,21 @@ export default function AlertsPage() {
   const handleSave = async () => {
     try {
       setActionLoading("save")
-      const account = accounts.find((a) => String(a.id) === form.account_id)
+      const isAccountQuota = form.threshold_type === "account_count_quota"
+      let target_type = "project"
+      let target_id: string | undefined
+      if (isAccountQuota) {
+        // 配额告警:target_type=account_count,target_id=云厂商范围(或 all)
+        target_type = "account_count"
+        target_id = form.account_count_scope || "all"
+      } else {
+        const account = accounts.find((a) => String(a.id) === form.account_id)
+        target_id = account?.external_project_id ?? undefined
+      }
       await alertsApi.createRule({
         name: form.name,
-        target_type: "project",
-        target_id: account?.external_project_id ?? undefined,
+        target_type,
+        target_id,
         threshold_type: form.threshold_type,
         threshold_value: Number(form.threshold_value),
         notify_webhook: form.notify_webhook || undefined,
@@ -144,50 +161,74 @@ export default function AlertsPage() {
             <DialogHeader><DialogTitle>添加告警规则</DialogTitle><DialogDescription>当服务账号费用超出阈值或未达承诺用量时触发告警</DialogDescription></DialogHeader>
             <div className="space-y-4 py-4">
               <div className="space-y-2"><Label>规则名称</Label><Input placeholder="如：账号A日费用超限" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
-              <div className="space-y-2"><Label>服务账号</Label>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+
+              {/* 配额告警:不选具体账号,选范围(全部 / 某朵云) */}
+              {form.threshold_type === "account_count_quota" ? (
+                <div className="space-y-2"><Label>告警范围</Label>
                   <Select
-                    value={form.supplier_id}
-                    onValueChange={(v) => setForm({ ...form, supplier_id: v, supply_source_id: "", account_id: "" })}
+                    value={form.account_count_scope}
+                    onValueChange={(v) => setForm({ ...form, account_count_scope: v })}
                   >
-                    <SelectTrigger><SelectValue placeholder="供应商" /></SelectTrigger>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      {[...suppliers].sort((a, b) => a.name.localeCompare(b.name)).map((s) => (
-                        <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
-                      ))}
+                      <SelectItem value="all">全部云厂商</SelectItem>
+                      <SelectItem value="aws">仅 AWS</SelectItem>
+                      <SelectItem value="gcp">仅 GCP</SelectItem>
+                      <SelectItem value="azure">仅 Azure</SelectItem>
+                      <SelectItem value="taiji">仅 Taiji</SelectItem>
                     </SelectContent>
                   </Select>
-                  <Select
-                    value={form.supply_source_id}
-                    onValueChange={(v) => setForm({ ...form, supply_source_id: v, account_id: "" })}
-                    disabled={!form.supplier_id}
-                  >
-                    <SelectTrigger><SelectValue placeholder="货源" /></SelectTrigger>
-                    <SelectContent>
-                      {formSources.map((src) => (
-                        <SelectItem key={src.id} value={String(src.id)}>
-                          {PROVIDER_LABELS[src.provider] ?? src.provider.toUpperCase()}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Select
-                    value={form.account_id}
-                    onValueChange={(v) => setForm({ ...form, account_id: v })}
-                    disabled={!form.supplier_id}
-                  >
-                    <SelectTrigger><SelectValue placeholder="服务账号" /></SelectTrigger>
-                    <SelectContent>
-                      {formAccounts.map((a) => (
-                        <SelectItem key={a.id} value={String(a.id)}>
-                          {a.name}{" "}
-                          <span className="text-xs text-muted-foreground">({a.external_project_id})</span>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    未回收的服务账号数 ≥ 配额 × {ACCOUNT_QUOTA_TRIGGER_PCT}% 时触发告警。
+                  </p>
                 </div>
-              </div>
+              ) : (
+                <div className="space-y-2"><Label>服务账号</Label>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <Select
+                      value={form.supplier_id}
+                      onValueChange={(v) => setForm({ ...form, supplier_id: v, supply_source_id: "", account_id: "" })}
+                    >
+                      <SelectTrigger><SelectValue placeholder="供应商" /></SelectTrigger>
+                      <SelectContent>
+                        {[...suppliers].sort((a, b) => a.name.localeCompare(b.name)).map((s) => (
+                          <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select
+                      value={form.supply_source_id}
+                      onValueChange={(v) => setForm({ ...form, supply_source_id: v, account_id: "" })}
+                      disabled={!form.supplier_id}
+                    >
+                      <SelectTrigger><SelectValue placeholder="货源" /></SelectTrigger>
+                      <SelectContent>
+                        {formSources.map((src) => (
+                          <SelectItem key={src.id} value={String(src.id)}>
+                            {PROVIDER_LABELS[src.provider] ?? src.provider.toUpperCase()}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select
+                      value={form.account_id}
+                      onValueChange={(v) => setForm({ ...form, account_id: v })}
+                      disabled={!form.supplier_id}
+                    >
+                      <SelectTrigger><SelectValue placeholder="服务账号" /></SelectTrigger>
+                      <SelectContent>
+                        {formAccounts.map((a) => (
+                          <SelectItem key={a.id} value={String(a.id)}>
+                            {a.name}{" "}
+                            <span className="text-xs text-muted-foreground">({a.external_project_id})</span>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2"><Label>告警类型</Label>
                   <Select value={form.threshold_type} onValueChange={(v) => setForm({ ...form, threshold_type: v })}>
@@ -197,10 +238,28 @@ export default function AlertsPage() {
                       <SelectItem value="monthly_budget">月预算超限 (USD)</SelectItem>
                       <SelectItem value="daily_increase_pct">日增长率超限 (%)</SelectItem>
                       <SelectItem value="monthly_minimum_commitment">月最低承诺用量 (USD)</SelectItem>
+                      <SelectItem value="account_count_quota">服务账号配额(达 90% 触发)</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-2"><Label>{form.threshold_type === "monthly_minimum_commitment" ? "承诺最低金额" : "阈值"}</Label><Input type="number" step="0.01" placeholder={form.threshold_type === "monthly_minimum_commitment" ? "月最低消费额 (USD)" : ""} value={form.threshold_value} onChange={(e) => setForm({ ...form, threshold_value: e.target.value })} /></div>
+                <div className="space-y-2">
+                  <Label>{
+                    form.threshold_type === "monthly_minimum_commitment" ? "承诺最低金额" :
+                    form.threshold_type === "account_count_quota" ? "配额上限 (个)" :
+                    "阈值"
+                  }</Label>
+                  <Input
+                    type="number"
+                    step={form.threshold_type === "account_count_quota" ? "1" : "0.01"}
+                    placeholder={
+                      form.threshold_type === "monthly_minimum_commitment" ? "月最低消费额 (USD)" :
+                      form.threshold_type === "account_count_quota" ? "如 100,达 90 个时告警" :
+                      ""
+                    }
+                    value={form.threshold_value}
+                    onChange={(e) => setForm({ ...form, threshold_value: e.target.value })}
+                  />
+                </div>
               </div>
               <div className="space-y-2"><Label>通知邮箱（多个用逗号分隔，可选）</Label><Input placeholder="admin@example.com, ops@example.com" value={form.notify_email} onChange={(e) => setForm({ ...form, notify_email: e.target.value })} /></div>
               <div className="space-y-2"><Label>Webhook 通知地址（可选）</Label><Input placeholder="https://..." value={form.notify_webhook} onChange={(e) => setForm({ ...form, notify_webhook: e.target.value })} /></div>
@@ -349,7 +408,11 @@ export default function AlertsPage() {
                   <TableCell className="font-medium text-foreground">{r.name}</TableCell>
                   <TableCell className="text-muted-foreground text-sm">{selectedAccountName(r.target_id)}</TableCell>
                   <TableCell className="text-muted-foreground">{THRESHOLD_LABELS[r.threshold_type] ?? r.threshold_type}</TableCell>
-                  <TableCell className="text-foreground font-mono">{r.threshold_type === "daily_increase_pct" ? `${r.threshold_value}%` : `$${r.threshold_value}`}</TableCell>
+                  <TableCell className="text-foreground font-mono">{
+                    r.threshold_type === "daily_increase_pct" ? `${r.threshold_value}%` :
+                    r.threshold_type === "account_count_quota" ? `${r.threshold_value} 个` :
+                    `$${r.threshold_value}`
+                  }</TableCell>
                   <TableCell className="text-muted-foreground text-xs">
                     {[r.notify_email && "邮件", r.notify_webhook && "Webhook"].filter(Boolean).join(" + ") || "—"}
                   </TableCell>

@@ -912,10 +912,20 @@ export default function AccountsPage() {
     return accounts.filter((a) => a.supply_source_id === selectedGroup.supplySourceId)
   }, [accounts, selectedGroup])
 
+  // ─── 服务账号分页(client-side):每页 N 张卡片 ────────────────
+  const [accountsPage, setAccountsPage] = useState(1)
+  const [accountsPageSize, setAccountsPageSize] = useState(24)
+  const accountsTotalPages = Math.max(1, Math.ceil(groupAccounts.length / accountsPageSize))
+  const pagedAccounts = useMemo(() => {
+    const start = (accountsPage - 1) * accountsPageSize
+    return groupAccounts.slice(start, start + accountsPageSize)
+  }, [groupAccounts, accountsPage, accountsPageSize])
+
   const handleSelectGroup = (supplierName: string, supplySourceId: number, provider: string) => {
     setSelectedGroup({ supplierName, supplySourceId, provider })
     setSelectedId(null); setDetail(null); setShowCreds(false); setCreds(null)
     setBulkSelectedIds(new Set())  // 切货源时清空批量选择
+    setAccountsPage(1)              // 切货源时回到第 1 页
   }
 
   // ─── 批量分配服务账号到另一个货源 ─────────────────────
@@ -1961,7 +1971,7 @@ export default function AccountsPage() {
               <div className="flex items-center justify-center py-20 text-muted-foreground"><div className="text-center"><KeyRound className="w-12 h-12 mx-auto mb-4 opacity-30" /><p>该云货源下暂无服务账号</p></div></div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                {groupAccounts.map((a) => (
+                {pagedAccounts.map((a) => (
                   <Card
                     key={a.id}
                     className={cn(
@@ -2012,6 +2022,44 @@ export default function AccountsPage() {
                     </CardContent>
                   </Card>
                 ))}
+              </div>
+            )}
+
+            {/* ─── 分页控件 ─── */}
+            {groupAccounts.length > accountsPageSize && (
+              <div className="flex items-center justify-between gap-3 mt-4 px-1">
+                <div className="text-xs text-muted-foreground">
+                  共 <span className="font-medium text-foreground">{groupAccounts.length}</span> 个 ·
+                  当前 <span className="font-medium text-foreground">
+                    {(accountsPage - 1) * accountsPageSize + 1}-{Math.min(accountsPage * accountsPageSize, groupAccounts.length)}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Select
+                    value={String(accountsPageSize)}
+                    onValueChange={(v) => { setAccountsPageSize(Number(v)); setAccountsPage(1) }}
+                  >
+                    <SelectTrigger className="h-8 w-[110px] text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {[12, 24, 48, 96].map((n) => (
+                        <SelectItem key={n} value={String(n)}>每页 {n}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    size="sm" variant="outline"
+                    disabled={accountsPage <= 1}
+                    onClick={() => setAccountsPage((p) => Math.max(1, p - 1))}
+                  >上一页</Button>
+                  <span className="text-xs text-muted-foreground tabular-nums">
+                    {accountsPage} / {accountsTotalPages}
+                  </span>
+                  <Button
+                    size="sm" variant="outline"
+                    disabled={accountsPage >= accountsTotalPages}
+                    onClick={() => setAccountsPage((p) => Math.min(accountsTotalPages, p + 1))}
+                  >下一页</Button>
+                </div>
               </div>
             )}
           </div>

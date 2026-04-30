@@ -66,23 +66,24 @@ async function doFetch(url: string, restInit: RequestInit, headers: Record<strin
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const r = await requestRaw(path, init)
+  if (r.status === 204) return undefined as T
+  return r.json()
+}
+
+/** 同 request,但返回原始 Response,供需要读 header(如 X-Total-Count)的调用方用。 */
+async function requestRaw(path: string, init?: RequestInit): Promise<Response> {
   const { headers: extraHeaders, ...restInit } = init ?? {}
   const url = path.startsWith("http") ? path : `${API_BASE}${path}`
   const headers: Record<string, string> = {
     ...(extraHeaders as Record<string, string>),
   }
-  // 仅在有 body 时带 application/json，避免 GET 因非简单请求触发 CORS 预检，且勿依赖 307 重定向（跨域下不稳定）
   if (restInit.body != null) {
     headers["Content-Type"] = "application/json"
   }
-
-  // /api/auth/refresh 本身 401 不要再递归刷新，直接跳登录
   const isRefreshCall = path === "/api/auth/refresh"
-
   let res = await doFetch(url, restInit, headers)
-
   if (res.status === 401 && !isRefreshCall) {
-    // 试一次 refresh，成功了用同样的参数重试原请求
     const refreshed = await tryRefresh()
     if (refreshed) {
       res = await doFetch(url, restInit, headers)
@@ -95,13 +96,47 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     redirectToLogin()
     throw new Error("API 401: redirecting to login")
   }
-
   if (!res.ok) {
     const body = await res.text().catch(() => "")
     throw new Error(`API ${res.status}: ${body}`)
   }
-  if (res.status === 204) return undefined as T
-  return res.json()
+  return res
+}
+
+/** 通用分页响应:items 是当前页数据,total 是过滤后总数(读自 X-Total-Count header)。 */
+export interface PagedResult<T> {
+  items: T[]
+  total: number
+  page: number
+  page_size: number
+}
+
+async function requestPaged<T>(path: string, init?: RequestInit): Promise<PagedResult<T>> {
+  const r = await requestRaw(path, init)
+  const items = (r.status === 204 ? [] : await r.json()) as T[]
+  const total = Number(r.headers.get("x-total-count") ?? items.length)
+  const page = Number(r.headers.get("x-page") ?? 1)
+  const page_size = Number(r.headers.get("x-page-size") ?? (items.length || 100))
+  return { items, total, page, page_size }
+}
+
+/** 自动循环拉完所有页,合并成单一数组返回。给"我就想要全量"的旧调用方用。 */
+async function fetchAllPaged<T>(buildPath: (page: number, pageSize: number) => string,
+                                 pageSize = 200): Promise<T[]> {
+  const out: T[] = []
+  let page = 1
+  while (true) {
+    const r = await requestPaged<T>(buildPath(page, pageSize))
+    out.push(...r.items)
+    if (out.length >= r.total || r.items.length === 0) break
+    page += 1
+    if (page > 100) {
+      // 安全阀:理论上不会过 100 页(每页 200 = 2 万条)
+      console.warn("fetchAllPaged: hit 100-page safety cap")
+      break
+    }
+  }
+  return out
 }
 
 // ─── Service Account Types ────────────────────────────────────
@@ -306,14 +341,31 @@ export const authApi = {
 }
 
 export const accountsApi = {
-  list: (params?: { provider?: string; status?: string; customer_code?: string }) => {
+  /** 全量列表:自动循环翻页拿全。给"想看完整列表"的简单调用方用。
+   *  返回 ServiceAccount[](保持向后兼容)。如要分页 UI,请用 listPaged。 */
+  list: (params?: { provider?: string; status?: string; customer_code?: string }) =>
+    fetchAllPaged<ServiceAccount>((page, pageSize) => {
+      const qs = new URLSearchParams()
+      if (params?.provider) qs.set("provider", params.provider)
+      if (params?.status) qs.set("status", params.status)
+      if (params?.customer_code) qs.set("customer_code", params.customer_code)
+      qs.set("page", String(page))
+      qs.set("page_size", String(pageSize))
+      return `/api/service-accounts/?${qs.toString()}`
+    }),
+
+  /** 单页列表,返回 { items, total, page, page_size }。给分页 UI 用。 */
+  listPaged: (params?: {
+    provider?: string; status?: string; customer_code?: string;
+    page?: number; page_size?: number
+  }) => {
     const qs = new URLSearchParams()
     if (params?.provider) qs.set("provider", params.provider)
     if (params?.status) qs.set("status", params.status)
     if (params?.customer_code) qs.set("customer_code", params.customer_code)
-    const q = qs.toString()
-    // 与 FastAPI @router.get("/") 一致，必须带尾部斜杠，否则会 307，跨域 fetch 可能失败
-    return request<ServiceAccount[]>(q ? `/api/service-accounts/?${q}` : "/api/service-accounts/")
+    qs.set("page", String(params?.page ?? 1))
+    qs.set("page_size", String(params?.page_size ?? 50))
+    return requestPaged<ServiceAccount>(`/api/service-accounts/?${qs.toString()}`)
   },
   get: (id: number) => request<ServiceAccountDetail>(`/api/service-accounts/${id}`),
   create: (data: {
@@ -542,12 +594,27 @@ export interface ProjectAssignmentLog {
 // ─── Projects API ─────────────────────────────────────────────
 
 export const projectsApi = {
-  list: (params?: { status?: string; provider?: string }) => {
+  /** 全量列表:自动循环翻页拿全。 */
+  list: (params?: { status?: string; provider?: string }) =>
+    fetchAllPaged<Project>((page, pageSize) => {
+      const qs = new URLSearchParams()
+      if (params?.status) qs.set("status", params.status)
+      if (params?.provider) qs.set("provider", params.provider)
+      qs.set("page", String(page))
+      qs.set("page_size", String(pageSize))
+      return `/api/projects/?${qs.toString()}`
+    }),
+
+  /** 单页列表,返回 { items, total, page, page_size }。给分页 UI 用。 */
+  listPaged: (params?: {
+    status?: string; provider?: string; page?: number; page_size?: number
+  }) => {
     const qs = new URLSearchParams()
     if (params?.status) qs.set("status", params.status)
     if (params?.provider) qs.set("provider", params.provider)
-    const q = qs.toString()
-    return request<Project[]>(q ? `/api/projects/?${q}` : "/api/projects/")
+    qs.set("page", String(params?.page ?? 1))
+    qs.set("page_size", String(params?.page_size ?? 50))
+    return requestPaged<Project>(`/api/projects/?${qs.toString()}`)
   },
   get: (id: number) => request<Project>(`/api/projects/${id}`),
   activate: (id: number) => request<Project>(`/api/projects/${id}/activate`, { method: "POST" }),
