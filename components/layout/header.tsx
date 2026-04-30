@@ -164,16 +164,16 @@ export function Header() {
   }
 
   return (
-    <header className="flex items-center justify-between h-16 px-6 border-b border-white/5 bg-background/60 backdrop-blur-xl z-20 sticky top-0 shadow-[0_4px_30px_rgba(0,0,0,0.1)]">
+    <header className="flex items-center justify-between h-16 px-6 border-b border-foreground/5 bg-background/60 backdrop-blur-xl z-20 sticky top-0 shadow-[0_4px_30px_rgba(0,0,0,0.1)]">
       {/* Global Search */}
       <div className="relative w-96 group">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground transition-colors group-focus-within:text-white" />
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground transition-colors group-focus-within:text-foreground" />
         <Input
           type="search"
           placeholder="搜索项目、资源..."
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          className="pl-10 bg-white/5 border-white/10 rounded-full transition-all focus:bg-white/10 focus:border-white/20 focus:ring-4 focus:ring-white/5"
+          className="pl-10 bg-foreground/5 border-foreground/10 rounded-full transition-all focus:bg-foreground/10 focus:border-foreground/20 focus:ring-4 focus:ring-foreground/5"
         />
       </div>
 

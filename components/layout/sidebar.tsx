@@ -37,12 +37,12 @@ export function Sidebar() {
   return (
     <aside
       className={cn(
-        "flex flex-col bg-sidebar/60 backdrop-blur-xl border-r border-white/5 transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] z-20 shadow-[4px_0_24px_rgba(0,0,0,0.2)]",
+        "flex flex-col bg-sidebar/60 backdrop-blur-xl border-r border-foreground/5 transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] z-20 shadow-[4px_0_24px_rgba(0,0,0,0.2)]",
         collapsed ? "w-16" : "w-64"
       )}
     >
       {/* Logo */}
-      <div className="flex items-center h-16 px-4 border-b border-white/5">
+      <div className="flex items-center h-16 px-4 border-b border-foreground/5">
         <Link href="/" className="flex items-center gap-3">
           <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-primary">
             <Cloud className="w-5 h-5 text-primary-foreground" />
@@ -66,12 +66,12 @@ export function Sidebar() {
               className={cn(
                 "group relative flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-300 ease-out active:scale-[0.98]",
                 isActive
-                  ? "bg-white/10 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.1)] backdrop-blur-md"
-                  : "text-sidebar-foreground/70 hover:bg-white/5 hover:text-white"
+                  ? "bg-foreground/10 text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.1)] backdrop-blur-md"
+                  : "text-sidebar-foreground/70 hover:bg-foreground/5 hover:text-foreground"
               )}
             >
               {isActive && (
-                <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-white rounded-r-full shadow-[0_0_12px_rgba(255,255,255,0.8)]" />
+                <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-foreground rounded-r-full shadow-[0_0_12px_rgba(127,127,127,0.4)]" />
               )}
               <item.icon className={cn(
                 "w-5 h-5 shrink-0 transition-transform duration-300",
@@ -84,12 +84,12 @@ export function Sidebar() {
       </nav>
 
       {/* Collapse button */}
-      <div className="p-2 border-t border-white/5">
+      <div className="p-2 border-t border-foreground/5">
         <Button
           variant="ghost"
           size="sm"
           onClick={() => setCollapsed(!collapsed)}
-          className="w-full justify-center text-sidebar-foreground/70 hover:text-white hover:bg-white/5 rounded-xl transition-all duration-300"
+          className="w-full justify-center text-sidebar-foreground/70 hover:text-foreground hover:bg-foreground/5 rounded-xl transition-all duration-300"
         >
           {collapsed ? (
             <ChevronRight className="w-4 h-4" />

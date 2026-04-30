@@ -54,13 +54,13 @@ export default function DashboardPage() {
   return (
     <div className="space-y-6 p-6">
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div><h1 className="text-3xl font-bold tracking-tight text-white">仪表盘</h1><p className="text-sm text-white/50 mt-1">全景云费用总览洞察</p></div>
+        <div><h1 className="text-3xl font-bold tracking-tight text-foreground">仪表盘</h1><p className="text-sm text-foreground/50 mt-1">全景云费用总览洞察</p></div>
         <Select value={month} onValueChange={setMonth}>
-          <SelectTrigger className="w-40 bg-white/5 border-white/10 text-white rounded-full">
+          <SelectTrigger className="w-40 bg-foreground/5 border-foreground/10 text-foreground rounded-full">
             <SelectValue />
           </SelectTrigger>
-          <SelectContent className="bg-popover border-white/10">
-            {monthOptions.map((o) => <SelectItem key={o.value} value={o.value} className="focus:bg-white/10">{o.label}</SelectItem>)}
+          <SelectContent className="bg-popover border-foreground/10">
+            {monthOptions.map((o) => <SelectItem key={o.value} value={o.value} className="focus:bg-foreground/10">{o.label}</SelectItem>)}
           </SelectContent>
         </Select>
       </div>
@@ -70,20 +70,20 @@ export default function DashboardPage() {
         <Card className="bg-card border-border"><CardContent className="p-6">
           <div className="flex items-start justify-between">
             <div className="space-y-2">
-              <p className="text-sm font-medium text-white/60">本月总费用</p>
-              <div className="text-3xl font-bold tracking-tight text-white">{overview ? fmt(overview.total_cost) : <Skeleton className="h-9 w-32" />}</div>
+              <p className="text-sm font-medium text-foreground/60">本月总费用</p>
+              <div className="text-3xl font-bold tracking-tight text-foreground">{overview ? fmt(overview.total_cost) : <Skeleton className="h-9 w-32" />}</div>
               {overview && overview.mom_change_pct !== 0 && (
                 <div className="flex items-center gap-1 mt-2">
                   <Badge variant="outline" className={cn("border-0 gap-1", overview.mom_change_pct > 0 ? "bg-red-500/10 text-red-400" : "bg-emerald-500/10 text-emerald-400")}>
                     {overview.mom_change_pct > 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
                     {overview.mom_change_pct > 0 ? "+" : ""}{overview.mom_change_pct}%
                   </Badge>
-                  <span className="text-xs text-white/40">vs 上月</span>
+                  <span className="text-xs text-foreground/40">vs 上月</span>
                 </div>
               )}
             </div>
-            <div className="p-3 rounded-2xl bg-white/5 border border-white/10 ring-1 ring-white/5 shadow-inner">
-              <TrendingUp className="w-5 h-5 text-white/80" />
+            <div className="p-3 rounded-2xl bg-foreground/5 border border-foreground/10 ring-1 ring-foreground/5 shadow-inner">
+              <TrendingUp className="w-5 h-5 text-foreground/80" />
             </div>
           </div>
         </CardContent></Card>
@@ -91,11 +91,11 @@ export default function DashboardPage() {
         <Card className="bg-card border-border"><CardContent className="p-6">
           <div className="flex items-start justify-between">
             <div className="space-y-2">
-              <p className="text-sm font-medium text-white/60">上月费用</p>
-              <div className="text-3xl font-bold tracking-tight text-white/80">{overview ? fmt(overview.prev_month_cost) : <Skeleton className="h-9 w-32" />}</div>
+              <p className="text-sm font-medium text-foreground/60">上月费用</p>
+              <div className="text-3xl font-bold tracking-tight text-foreground/80">{overview ? fmt(overview.prev_month_cost) : <Skeleton className="h-9 w-32" />}</div>
             </div>
-            <div className="p-3 rounded-2xl bg-white/5 border border-white/10 ring-1 ring-white/5 shadow-inner">
-              <FolderKanban className="w-5 h-5 text-white/50" />
+            <div className="p-3 rounded-2xl bg-foreground/5 border border-foreground/10 ring-1 ring-foreground/5 shadow-inner">
+              <FolderKanban className="w-5 h-5 text-foreground/50" />
             </div>
           </div>
         </CardContent></Card>
@@ -103,15 +103,15 @@ export default function DashboardPage() {
         <Card className="bg-card border-border"><CardContent className="p-6">
           <div className="flex items-start justify-between">
             <div className="space-y-2">
-              <p className="text-sm font-medium text-white/60">服务账号</p>
-              <div className="text-3xl font-bold tracking-tight text-white">{accounts ? accounts.length : <Skeleton className="h-9 w-16" />}</div>
+              <p className="text-sm font-medium text-foreground/60">服务账号</p>
+              <div className="text-3xl font-bold tracking-tight text-foreground">{accounts ? accounts.length : <Skeleton className="h-9 w-16" />}</div>
               <div className="flex gap-2 text-xs pt-2">
                 <Badge variant="outline" className="bg-emerald-500/10 text-emerald-400 border-0 text-xs">使用中 {statusCounts.active}</Badge>
                 <Badge variant="outline" className="bg-red-500/10 text-red-400 border-0 text-xs">已停用 {statusCounts.inactive}</Badge>
               </div>
             </div>
-            <div className="p-3 rounded-2xl bg-white/5 border border-white/10 ring-1 ring-white/5 shadow-inner">
-               <KeyRound className="w-5 h-5 text-white/80" />
+            <div className="p-3 rounded-2xl bg-foreground/5 border border-foreground/10 ring-1 ring-foreground/5 shadow-inner">
+               <KeyRound className="w-5 h-5 text-foreground/80" />
             </div>
           </div>
         </CardContent></Card>
@@ -123,8 +123,8 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
         {/* Daily Trend */}
         <Card className="col-span-1 xl:col-span-2 bg-gradient-to-br from-white/[0.04] to-card/50">
-          <CardHeader className="pb-2 border-b border-white/5 mb-4">
-            <CardTitle className="text-base font-semibold tracking-wide text-white">每日费用趋势</CardTitle>
+          <CardHeader className="pb-2 border-b border-foreground/5 mb-4">
+            <CardTitle className="text-base font-semibold tracking-wide text-foreground">每日费用趋势</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="h-[320px] px-2 w-full">
@@ -157,8 +157,8 @@ export default function DashboardPage() {
 
         {/* Provider Pie */}
         <Card className="col-span-1 bg-gradient-to-bl from-white/[0.04] to-card/50">
-          <CardHeader className="pb-2 border-b border-white/5 mb-4">
-            <CardTitle className="text-base font-semibold tracking-wide text-white">云厂商费用占比</CardTitle>
+          <CardHeader className="pb-2 border-b border-foreground/5 mb-4">
+            <CardTitle className="text-base font-semibold tracking-wide text-foreground">云厂商费用占比</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="h-[320px] flex flex-col justify-between">
@@ -182,12 +182,12 @@ export default function DashboardPage() {
                   {(byProvider ?? []).map((r: DashboardProviderSlice, i: number) => (
                     <div key={r.provider} className="flex items-center justify-between text-sm group">
                       <div className="flex items-center gap-3">
-                        <div className="w-3 h-3 rounded-full shadow-inner ring-1 ring-white/10" style={{ backgroundColor: COLORS[i % COLORS.length] }} />
-                        <span className="text-white/80 font-medium group-hover:text-white transition-colors">{r.provider}</span>
+                        <div className="w-3 h-3 rounded-full shadow-inner ring-1 ring-foreground/10" style={{ backgroundColor: COLORS[i % COLORS.length] }} />
+                        <span className="text-foreground/80 font-medium group-hover:text-foreground transition-colors">{r.provider}</span>
                       </div>
                       <div className="text-right flex items-center gap-3">
-                        <span className="font-mono text-white tracking-tight">{fmt(Number(r.cost))}</span>
-                        <span className="text-white/40 text-xs w-8 text-right">{r.percentage}%</span>
+                        <span className="font-mono text-foreground tracking-tight">{fmt(Number(r.cost))}</span>
+                        <span className="text-foreground/40 text-xs w-8 text-right">{r.percentage}%</span>
                       </div>
                     </div>
                   ))}
@@ -200,8 +200,8 @@ export default function DashboardPage() {
 
       {/* Top Services */}
       <Card className="bg-gradient-to-t from-white/[0.02] to-card/50">
-        <CardHeader className="pb-2 border-b border-white/5 mb-4">
-          <CardTitle className="text-base font-semibold tracking-wide text-white">Top 10 云服务费用分布</CardTitle>
+        <CardHeader className="pb-2 border-b border-foreground/5 mb-4">
+          <CardTitle className="text-base font-semibold tracking-wide text-foreground">Top 10 云服务费用分布</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="h-[360px] pl-4 pb-4">

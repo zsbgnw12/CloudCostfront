@@ -551,7 +551,7 @@ export default function AzureDeployPage() {
               {i > 0 && (
                 <div className={cn(
                   "h-px w-8 md:w-16 transition-colors",
-                  isDone ? "bg-primary" : "bg-white/10"
+                  isDone ? "bg-primary" : "bg-foreground/10"
                 )} />
               )}
               <div
@@ -566,7 +566,7 @@ export default function AzureDeployPage() {
                   "flex items-center justify-center w-7 h-7 rounded-lg text-xs font-bold",
                   isActive && "bg-primary text-primary-foreground",
                   isDone && "bg-green-500/20 text-green-400",
-                  !isActive && !isDone && "bg-white/5 text-muted-foreground"
+                  !isActive && !isDone && "bg-foreground/5 text-muted-foreground"
                 )}>
                   {isDone ? <Check className="w-4 h-4" /> : <Icon className="w-4 h-4" />}
                 </div>
@@ -578,7 +578,7 @@ export default function AzureDeployPage() {
       </div>
 
       {/* Step content */}
-      <Card className="border-white/5 bg-card/50 backdrop-blur">
+      <Card className="border-foreground/5 bg-card/50 backdrop-blur">
         <CardContent className="pt-6">
           {step === 0 && (
             <StepLogin
@@ -960,10 +960,10 @@ function StepConfig({
             </Button>
           </div>
         ) : (
-          <div className="rounded-xl border border-white/5 overflow-hidden">
+          <div className="rounded-xl border border-foreground/5 overflow-hidden">
             <Table>
               <TableHeader>
-                <TableRow className="hover:bg-transparent border-white/5">
+                <TableRow className="hover:bg-transparent border-foreground/5">
                   <TableHead className="w-12"></TableHead>
                   <TableHead>资源名</TableHead>
                   <TableHead>区域</TableHead>
@@ -974,7 +974,7 @@ function StepConfig({
                 {aiResources.map((res) => (
                   <TableRow
                     key={res.name}
-                    className="cursor-pointer border-white/5 hover:bg-white/5"
+                    className="cursor-pointer border-foreground/5 hover:bg-foreground/5"
                     onClick={() => onToggleResource(res.name)}
                   >
                     <TableCell>
@@ -1147,10 +1147,10 @@ function StepModels({
         {availableModels.length === 0 ? (
           <p className="text-sm text-muted-foreground">没有可用的模型</p>
         ) : (
-          <div className="rounded-xl border border-white/5 overflow-hidden">
+          <div className="rounded-xl border border-foreground/5 overflow-hidden">
             <Table>
               <TableHeader>
-                <TableRow className="hover:bg-transparent border-white/5">
+                <TableRow className="hover:bg-transparent border-foreground/5">
                   <TableHead className="w-12"></TableHead>
                   <TableHead>模型</TableHead>
                   <TableHead>版本</TableHead>
@@ -1164,7 +1164,7 @@ function StepModels({
                   return (
                     <TableRow
                       key={key}
-                      className="cursor-pointer border-white/5 hover:bg-white/5"
+                      className="cursor-pointer border-foreground/5 hover:bg-foreground/5"
                       onClick={() => onToggleModel(key)}
                     >
                       <TableCell>
@@ -1195,7 +1195,7 @@ function StepModels({
       </div>
 
       {/* Deploy params */}
-      <Separator className="bg-white/5" />
+      <Separator className="bg-foreground/5" />
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="space-y-2">
           <Label>SKU 类型</Label>
@@ -1251,7 +1251,7 @@ function StepModels({
       {/* Matrix preview */}
       {selectedModels.size > 0 && selectedResources.length > 0 && (
         <>
-          <Separator className="bg-white/5" />
+          <Separator className="bg-foreground/5" />
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <Label>部署预览（模型 × 资源）</Label>
@@ -1266,10 +1266,10 @@ function StepModels({
                 {planResult ? "重新预检" : "预检"}
               </Button>
             </div>
-            <div className="rounded-xl border border-white/5 overflow-auto">
+            <div className="rounded-xl border border-foreground/5 overflow-auto">
               <Table>
                 <TableHeader>
-                  <TableRow className="hover:bg-transparent border-white/5">
+                  <TableRow className="hover:bg-transparent border-foreground/5">
                     <TableHead className="sticky left-0 bg-card z-10">模型</TableHead>
                     {selectedResources.map(res => (
                       <TableHead key={res.name} className="text-center min-w-[140px]">
@@ -1283,7 +1283,7 @@ function StepModels({
                   {[...selectedModels].map(modelKey => {
                     const [modelName, modelVersion] = modelKey.split("@")
                     return (
-                      <TableRow key={modelKey} className="border-white/5">
+                      <TableRow key={modelKey} className="border-foreground/5">
                         <TableCell className="sticky left-0 bg-card z-10 font-medium">
                           <div>{modelName}</div>
                           <div className="text-xs text-muted-foreground">{modelVersion}</div>
@@ -1320,7 +1320,7 @@ function StepModels({
 
       {/* Plan result summary */}
       {planResult && (
-        <div className="rounded-xl border border-white/5 p-4 space-y-2">
+        <div className="rounded-xl border border-foreground/5 p-4 space-y-2">
           <p className="text-sm font-medium">预检结果</p>
           <div className="flex flex-wrap gap-4 text-sm">
             {planResult.can_create > 0 && (
@@ -1467,10 +1467,10 @@ function StepDeploy({
 
       {/* Items table */}
       {progress && progress.items.length > 0 && (
-        <div className="rounded-xl border border-white/5 overflow-hidden">
+        <div className="rounded-xl border border-foreground/5 overflow-hidden">
           <Table>
             <TableHeader>
-              <TableRow className="hover:bg-transparent border-white/5">
+              <TableRow className="hover:bg-transparent border-foreground/5">
                 <TableHead className="w-16">状态</TableHead>
                 <TableHead>模型</TableHead>
                 <TableHead>目标资源</TableHead>
@@ -1483,7 +1483,7 @@ function StepDeploy({
                 const cfg = STATUS_ICON[item.status]
                 const Icon = cfg?.icon ?? Loader2
                 return (
-                  <TableRow key={idx} className="border-white/5">
+                  <TableRow key={idx} className="border-foreground/5">
                     <TableCell>
                       <Icon className={cn("w-4 h-4", cfg?.color, cfg?.animate)} />
                     </TableCell>
@@ -1509,7 +1509,7 @@ function StepDeploy({
       {/* Logs */}
       <div className="space-y-2">
         <Label>日志</Label>
-        <ScrollArea className="h-48 rounded-xl border border-white/5 bg-black/20 p-3">
+        <ScrollArea className="h-48 rounded-xl border border-foreground/5 bg-black/20 p-3">
           <div className="space-y-1 font-mono text-xs">
             {logs.map((log, i) => (
               <p key={i} className={cn(

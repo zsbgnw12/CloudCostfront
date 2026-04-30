@@ -482,11 +482,11 @@ export default function MeteringPage() {
                         return (
                           <div
                             key={`${row.name}-${row.colorIndex}`}
-                            className="flex items-start justify-between gap-2 border-b border-white/10 pb-1.5 last:border-0 last:pb-0"
+                            className="flex items-start justify-between gap-2 border-b border-foreground/10 pb-1.5 last:border-0 last:pb-0"
                           >
                             <div className="flex min-w-0 items-start gap-2">
                               <span
-                                className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ring-1 ring-white/20"
+                                className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ring-1 ring-foreground/20"
                                 style={{ backgroundColor: COLORS[row.colorIndex % COLORS.length] }}
                               />
                               <span className="break-words text-foreground" title={row.name}>
@@ -656,7 +656,7 @@ function SummaryCard({
         <div className="flex items-center gap-2 mb-2">
           <div
             className={cn(
-              "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/[0.06] ring-1 ring-white/10",
+              "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-foreground/[0.06] ring-1 ring-foreground/10",
               color,
             )}
             aria-hidden

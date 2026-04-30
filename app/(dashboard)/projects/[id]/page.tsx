@@ -21,7 +21,7 @@ import {
 } from "@/lib/api"
 
 const statusConfig: Record<string, { label: string; className: string }> = {
-  active: { label: "已启用", className: "bg-status-active text-white" },
+  active: { label: "已启用", className: "bg-status-active text-foreground" },
   inactive: { label: "已停用", className: "bg-status-suspended text-black" },
   deleted: { label: "已删除", className: "bg-muted text-muted-foreground" },
 }
