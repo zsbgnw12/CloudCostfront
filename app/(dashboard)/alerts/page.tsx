@@ -24,6 +24,7 @@ const THRESHOLD_LABELS: Record<string, string> = {
   daily_increase_pct: "日增长率超限",
   monthly_minimum_commitment: "月最低承诺用量",
   account_lifetime_quota: "账号总配额(达 90% 触发)",
+  monthly_budget_multi: "多项目月预算合计",
 }
 
 /** 账号总配额告警 — 触发百分比硬编码 90%(后端 alert_service.py 也用同一常量)。 */
@@ -49,6 +50,8 @@ export default function AlertsPage() {
     threshold_value: "",
     notify_webhook: "",
     notify_email: "",
+    // monthly_budget_multi 用:勾选的 project external_project_id 列表
+    multi_account_ids: [] as number[],
   })
   const [actionLoading, setActionLoading] = useState<string | null>(null)
 
@@ -93,10 +96,20 @@ export default function AlertsPage() {
       threshold_value: "",
       notify_webhook: "",
       notify_email: "",
+      multi_account_ids: [],
     })
 
   const selectedAccountName = (targetId: string | null) => {
     if (!targetId) return "全局"
+    // 多项目模式:逗号分隔的 ID 列表
+    if (targetId.includes(",")) {
+      const ids = targetId.split(",").map((s) => s.trim()).filter(Boolean)
+      const names = ids.map((id) => {
+        const a = accounts.find((x) => x.external_project_id === id)
+        return a ? a.name : id
+      })
+      return `${ids.length} 个项目: ${names.slice(0, 2).join(", ")}${names.length > 2 ? ` 等` : ""}`
+    }
     const a = accounts.find((x) => x.external_project_id === targetId)
     return a ? `${a.name} (${a.external_project_id})` : targetId
   }
@@ -104,13 +117,21 @@ export default function AlertsPage() {
   const handleSave = async () => {
     try {
       setActionLoading("save")
-      const account = accounts.find((a) => String(a.id) === form.account_id)
-      // 单账号生命周期总配额告警 + 其他类型,target 都是 project
-      // (target_id = project.external_project_id)
+      let target_type = "project"
+      let target_id: string | undefined
+      if (form.threshold_type === "monthly_budget_multi") {
+        // 多项目月预算合计:target_id = 逗号分隔的 external_project_id
+        const picked = accounts.filter((a) => form.multi_account_ids.includes(a.id))
+        target_type = "project_group"
+        target_id = picked.map((a) => a.external_project_id).join(",") || undefined
+      } else {
+        const account = accounts.find((a) => String(a.id) === form.account_id)
+        target_id = account?.external_project_id ?? undefined
+      }
       await alertsApi.createRule({
         name: form.name,
-        target_type: "project",
-        target_id: account?.external_project_id ?? undefined,
+        target_type,
+        target_id,
         threshold_type: form.threshold_type,
         threshold_value: Number(form.threshold_value),
         notify_webhook: form.notify_webhook || undefined,
@@ -151,55 +172,100 @@ export default function AlertsPage() {
             <div className="space-y-4 py-4">
               <div className="space-y-2"><Label>规则名称</Label><Input placeholder="如：账号A日费用超限" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
 
-              <div className="space-y-2"><Label>服务账号</Label>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  <Select
-                    value={form.supplier_id}
-                    onValueChange={(v) => setForm({ ...form, supplier_id: v, supply_source_id: "", account_id: "" })}
-                  >
-                    <SelectTrigger><SelectValue placeholder="供应商" /></SelectTrigger>
-                    <SelectContent>
-                      {[...suppliers].sort((a, b) => a.name.localeCompare(b.name)).map((s) => (
-                        <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Select
-                    value={form.supply_source_id}
-                    onValueChange={(v) => setForm({ ...form, supply_source_id: v, account_id: "" })}
-                    disabled={!form.supplier_id}
-                  >
-                    <SelectTrigger><SelectValue placeholder="货源" /></SelectTrigger>
-                    <SelectContent>
-                      {formSources.map((src) => (
-                        <SelectItem key={src.id} value={String(src.id)}>
-                          {PROVIDER_LABELS[src.provider] ?? src.provider.toUpperCase()}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Select
-                    value={form.account_id}
-                    onValueChange={(v) => setForm({ ...form, account_id: v })}
-                    disabled={!form.supplier_id}
-                  >
-                    <SelectTrigger><SelectValue placeholder="服务账号" /></SelectTrigger>
-                    <SelectContent>
-                      {formAccounts.map((a) => (
-                        <SelectItem key={a.id} value={String(a.id)}>
-                          {a.name}{" "}
-                          <span className="text-xs text-muted-foreground">({a.external_project_id})</span>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                {form.threshold_type === "account_lifetime_quota" && (
+              {form.threshold_type === "monthly_budget_multi" ? (
+                /* 多项目模式:勾选多个账号(可跨供应商) */
+                <div className="space-y-2">
+                  <Label>服务账号(多选)</Label>
+                  <div className="rounded-md border border-border max-h-56 overflow-y-auto p-2 space-y-1 bg-background/50">
+                    {accounts.length === 0 ? (
+                      <p className="text-xs text-muted-foreground p-2">暂无可选账号</p>
+                    ) : (
+                      accounts.map((a) => {
+                        const checked = form.multi_account_ids.includes(a.id)
+                        return (
+                          <label
+                            key={a.id}
+                            className="flex items-center gap-2 p-1.5 rounded hover:bg-accent/50 cursor-pointer text-sm"
+                          >
+                            <input
+                              type="checkbox"
+                              className="size-4"
+                              checked={checked}
+                              onChange={() => {
+                                setForm((f) => ({
+                                  ...f,
+                                  multi_account_ids: checked
+                                    ? f.multi_account_ids.filter((x) => x !== a.id)
+                                    : [...f.multi_account_ids, a.id],
+                                }))
+                              }}
+                            />
+                            <img src={`/${a.provider}.svg`} alt={a.provider} className="w-4 h-4 shrink-0" />
+                            <span className="truncate">{a.name}</span>
+                            <span className="text-xs text-muted-foreground truncate">
+                              ({a.external_project_id}) · {a.supplier_name}
+                            </span>
+                          </label>
+                        )
+                      })
+                    )}
+                  </div>
                   <p className="text-xs text-muted-foreground">
-                    该账号生命周期累计费用 ≥ 配额 × {ACCOUNT_QUOTA_TRIGGER_PCT}% 时触发告警(从账号创建到现在的全部费用 SUM)。
+                    已选 <span className="text-foreground font-medium">{form.multi_account_ids.length}</span> 个账号 ·
+                    本月这些账号的费用合计 ≥ 阈值时触发告警。
                   </p>
-                )}
-              </div>
+                </div>
+              ) : (
+                <div className="space-y-2"><Label>服务账号</Label>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <Select
+                      value={form.supplier_id}
+                      onValueChange={(v) => setForm({ ...form, supplier_id: v, supply_source_id: "", account_id: "" })}
+                    >
+                      <SelectTrigger><SelectValue placeholder="供应商" /></SelectTrigger>
+                      <SelectContent>
+                        {[...suppliers].sort((a, b) => a.name.localeCompare(b.name)).map((s) => (
+                          <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select
+                      value={form.supply_source_id}
+                      onValueChange={(v) => setForm({ ...form, supply_source_id: v, account_id: "" })}
+                      disabled={!form.supplier_id}
+                    >
+                      <SelectTrigger><SelectValue placeholder="货源" /></SelectTrigger>
+                      <SelectContent>
+                        {formSources.map((src) => (
+                          <SelectItem key={src.id} value={String(src.id)}>
+                            {PROVIDER_LABELS[src.provider] ?? src.provider.toUpperCase()}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select
+                      value={form.account_id}
+                      onValueChange={(v) => setForm({ ...form, account_id: v })}
+                      disabled={!form.supplier_id}
+                    >
+                      <SelectTrigger><SelectValue placeholder="服务账号" /></SelectTrigger>
+                      <SelectContent>
+                        {formAccounts.map((a) => (
+                          <SelectItem key={a.id} value={String(a.id)}>
+                            {a.name}{" "}
+                            <span className="text-xs text-muted-foreground">({a.external_project_id})</span>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {form.threshold_type === "account_lifetime_quota" && (
+                    <p className="text-xs text-muted-foreground">
+                      该账号生命周期累计费用 ≥ 配额 × {ACCOUNT_QUOTA_TRIGGER_PCT}% 时触发告警(从账号创建到现在的全部费用 SUM)。
+                    </p>
+                  )}
+                </div>
+              )}
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2"><Label>告警类型</Label>
@@ -211,6 +277,7 @@ export default function AlertsPage() {
                       <SelectItem value="daily_increase_pct">日增长率超限 (%)</SelectItem>
                       <SelectItem value="monthly_minimum_commitment">月最低承诺用量 (USD)</SelectItem>
                       <SelectItem value="account_lifetime_quota">账号总配额(达 90% 触发)</SelectItem>
+                      <SelectItem value="monthly_budget_multi">多项目月预算合计 (USD)</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -218,6 +285,7 @@ export default function AlertsPage() {
                   <Label>{
                     form.threshold_type === "monthly_minimum_commitment" ? "承诺最低金额" :
                     form.threshold_type === "account_lifetime_quota" ? "总配额上限 (USD)" :
+                    form.threshold_type === "monthly_budget_multi" ? "月预算合计 (USD)" :
                     "阈值"
                   }</Label>
                   <Input
@@ -226,6 +294,7 @@ export default function AlertsPage() {
                     placeholder={
                       form.threshold_type === "monthly_minimum_commitment" ? "月最低消费额 (USD)" :
                       form.threshold_type === "account_lifetime_quota" ? "如 1000,累计达 900 美元时告警" :
+                      form.threshold_type === "monthly_budget_multi" ? "如 40000,4 个 project 合计预算" :
                       ""
                     }
                     value={form.threshold_value}
@@ -236,7 +305,14 @@ export default function AlertsPage() {
               <div className="space-y-2"><Label>通知邮箱（多个用逗号分隔，可选）</Label><Input placeholder="admin@example.com, ops@example.com" value={form.notify_email} onChange={(e) => setForm({ ...form, notify_email: e.target.value })} /></div>
               <div className="space-y-2"><Label>Webhook 通知地址（可选）</Label><Input placeholder="https://..." value={form.notify_webhook} onChange={(e) => setForm({ ...form, notify_webhook: e.target.value })} /></div>
             </div>
-            <DialogFooter><Button variant="outline" onClick={() => { setDialogOpen(false); resetForm() }}>取消</Button><Button onClick={handleSave} disabled={!form.name || !form.account_id || !form.threshold_value || actionLoading === "save"}>
+            <DialogFooter><Button variant="outline" onClick={() => { setDialogOpen(false); resetForm() }}>取消</Button><Button onClick={handleSave} disabled={
+              !form.name ||
+              !form.threshold_value ||
+              actionLoading === "save" ||
+              (form.threshold_type === "monthly_budget_multi"
+                ? form.multi_account_ids.length === 0
+                : !form.account_id)
+            }>
               {actionLoading === "save" && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}添加
             </Button></DialogFooter>
           </DialogContent>

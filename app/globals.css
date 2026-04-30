@@ -1,45 +1,90 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
 
-/* CloudCost uses dark theme by default */
+/* CloudCost - 双主题:默认日间(:root),夜间用 .dark 覆盖 */
 
 :root {
-  /* CloudCost Dark Theme - High-end SaaS Style (Zinc/Slate inspired) */
-  --background: oklch(0.145 0 0); /* Very dark gray, almost black */
-  --foreground: oklch(0.985 0 0); /* Off-white text */
-  --card: oklch(0.16 0 0 / 0.4); /* Translucent cards for glassmorphism */
+  /* ─── Light theme (日间) — 现代 SaaS 风格,Notion/Linear 启发 ─── */
+  --background: oklch(0.99 0 0);          /* 几乎纯白,带极微暖调避免刺眼 */
+  --foreground: oklch(0.18 0 0);          /* 深灰文字,柔和高对比 */
+  --card: oklch(1 0 0 / 0.7);             /* 半透白卡片(glassmorphism)*/
+  --card-foreground: oklch(0.18 0 0);
+  --popover: oklch(1 0 0 / 0.95);
+  --popover-foreground: oklch(0.18 0 0);
+  --primary: oklch(0.22 0 0);             /* 深色主按钮,黑底白字 */
+  --primary-foreground: oklch(0.98 0 0);
+  --secondary: oklch(0.96 0 0);           /* 浅灰副按钮 */
+  --secondary-foreground: oklch(0.22 0 0);
+  --muted: oklch(0.96 0 0);
+  --muted-foreground: oklch(0.45 0 0);    /* 中灰提示文字 */
+  --accent: oklch(0.95 0 0);
+  --accent-foreground: oklch(0.22 0 0);
+  --destructive: oklch(0.6 0.22 25);
+  --destructive-foreground: oklch(1 0 0);
+  --border: oklch(0.91 0 0 / 0.7);        /* 极淡分隔线 */
+  --input: oklch(0.97 0 0 / 0.8);
+  --ring: oklch(0.22 0 0 / 0.4);
+
+  /* Chart 颜色:浅色背景下需要饱和度更高 */
+  --chart-1: oklch(0.55 0.18 230);
+  --chart-2: oklch(0.6 0.16 165);
+  --chart-3: oklch(0.55 0.18 290);
+  --chart-4: oklch(0.65 0.18 70);
+  --chart-5: oklch(0.55 0.2 20);
+
+  --aws: oklch(0.65 0.2 40);
+  --gcp: oklch(0.55 0.2 145);
+  --azure: oklch(0.55 0.2 250);
+  --radius: 0.75rem;
+
+  --sidebar: oklch(0.985 0 0 / 0.6);
+  --sidebar-foreground: oklch(0.25 0 0);
+  --sidebar-primary: oklch(0.22 0 0);
+  --sidebar-primary-foreground: oklch(0.98 0 0);
+  --sidebar-accent: oklch(0.95 0 0 / 0.7);
+  --sidebar-accent-foreground: oklch(0.22 0 0);
+  --sidebar-border: oklch(0.91 0 0 / 0.5);
+  --sidebar-ring: oklch(0.22 0 0 / 0.4);
+
+  --status-active: oklch(0.6 0.18 145);
+  --status-standby: oklch(0.55 0.16 250);
+  --status-suspended: oklch(0.65 0.18 70);
+  --status-recycled: oklch(0.55 0 0);
+}
+
+.dark {
+  /* ─── Dark theme (夜间) — 原 CloudCost 高端 SaaS 风格 ─── */
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.16 0 0 / 0.4);
   --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.16 0 0 / 0.8); /* Semi-transparent popovers */
+  --popover: oklch(0.16 0 0 / 0.8);
   --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.985 0 0); /* White primary for sharp contrast (like Vercel) */
-  --primary-foreground: oklch(0.2 0 0); /* Dark text on primary buttons */
+  --primary: oklch(0.985 0 0);
+  --primary-foreground: oklch(0.2 0 0);
   --secondary: oklch(0.23 0 0);
   --secondary-foreground: oklch(0.985 0 0);
   --muted: oklch(0.2 0 0);
-  --muted-foreground: oklch(0.65 0 0); /* Gray text */
+  --muted-foreground: oklch(0.65 0 0);
   --accent: oklch(0.23 0 0);
   --accent-foreground: oklch(0.985 0 0);
   --destructive: oklch(0.57 0.22 25);
   --destructive-foreground: oklch(1 0 0);
-  --border: oklch(0.28 0 0 / 0.3); /* Very subtle transparent borders */
+  --border: oklch(0.28 0 0 / 0.3);
   --input: oklch(0.23 0 0 / 0.5);
-  --ring: oklch(0.985 0 0 / 0.5); /* White subtle glow ring */
-  
-  /* Chart colors - refined data palette (Stripe inspired) */
-  --chart-1: oklch(0.75 0.14 230); /* Light blue */
-  --chart-2: oklch(0.8 0.12 165); /* Soft green */
-  --chart-3: oklch(0.76 0.13 290); /* Purple/Indigo */
-  --chart-4: oklch(0.8 0.12 70); /* Amber/Yellow */
-  --chart-5: oklch(0.7 0.15 20); /* Rose/Red */
-  
-  /* Cloud provider brand colors - more saturated */
+  --ring: oklch(0.985 0 0 / 0.5);
+
+  --chart-1: oklch(0.75 0.14 230);
+  --chart-2: oklch(0.8 0.12 165);
+  --chart-3: oklch(0.76 0.13 290);
+  --chart-4: oklch(0.8 0.12 70);
+  --chart-5: oklch(0.7 0.15 20);
+
   --aws: oklch(0.75 0.2 40);
   --gcp: oklch(0.7 0.2 145);
   --azure: oklch(0.65 0.18 250);
-  --radius: 0.75rem; /* Smoother, larger radius */
-  
-  /* Dark sidebar - translucent/floating feel */
-  --sidebar: oklch(0.145 0 0 / 0.4); 
+
+  --sidebar: oklch(0.145 0 0 / 0.4);
   --sidebar-foreground: oklch(0.85 0 0);
   --sidebar-primary: oklch(0.985 0 0);
   --sidebar-primary-foreground: oklch(0.2 0 0);
@@ -47,8 +92,7 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(0.28 0 0 / 0.2);
   --sidebar-ring: oklch(0.985 0 0 / 0.5);
-  
-  /* Status colors - brightened for contrast */
+
   --status-active: oklch(0.75 0.16 145);
   --status-standby: oklch(0.7 0.14 250);
   --status-suspended: oklch(0.8 0.15 70);
@@ -114,11 +158,20 @@
   }
   body {
     @apply bg-background text-foreground transition-colors duration-300 antialiased;
-    background-image: 
+    background-color: var(--background);
+    background-attachment: fixed;
+  }
+  /* 夜间专属渐变背景(浅色下不显示) */
+  .dark body {
+    background-image:
       radial-gradient(100% 100% at 50% 0%, oklch(0.22 0 0 / 0.5) 0%, transparent 50%),
       radial-gradient(100% 100% at 0% 100%, oklch(0.18 0.05 250 / 0.15) 0%, transparent 40%);
-    background-attachment: fixed;
-    background-color: var(--background);
+  }
+  /* 日间柔和渐变 */
+  :root:not(.dark) body {
+    background-image:
+      radial-gradient(100% 100% at 50% 0%, oklch(0.96 0.005 250 / 0.6) 0%, transparent 50%),
+      radial-gradient(100% 100% at 100% 100%, oklch(0.94 0.01 145 / 0.4) 0%, transparent 40%);
   }
   
   /* Global smooth transitions for common interactive elements */

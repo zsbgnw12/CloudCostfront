@@ -61,7 +61,7 @@ const CHART_TICK = { fill: "#d4d4d8", fontSize: 11 }
 const CHART_GRID = "rgba(255,255,255,0.08)"
 
 function legendTextLight(value: string) {
-  return <span className="text-zinc-200">{value}</span>
+  return <span className="text-foreground">{value}</span>
 }
 
 /** API 可能返回 string（Decimal 序列化），统一转成 number */
@@ -237,8 +237,8 @@ export default function MeteringPage() {
     <div className="p-6 space-y-6">
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-zinc-100">计量</h1>
-          <p className="text-sm text-zinc-400 mt-1">
+          <h1 className="text-2xl font-bold text-foreground">计量</h1>
+          <p className="text-sm text-muted-foreground mt-1">
             云账单用量（billing_data，三云同步数据）
           </p>
         </div>
@@ -386,7 +386,7 @@ export default function MeteringPage() {
         <TabsContent value="trend">
           <Card className="bg-card border-border">
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-zinc-100">每日用量与费用</CardTitle>
+              <CardTitle className="text-sm font-medium text-foreground">每日用量与费用</CardTitle>
             </CardHeader>
             <CardContent>
               {dailyChartData.length === 0 ? (
@@ -429,11 +429,11 @@ export default function MeteringPage() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <Card className="bg-card border-border">
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-zinc-100">服务用量占比</CardTitle>
+                <CardTitle className="text-sm font-medium text-foreground">服务用量占比</CardTitle>
               </CardHeader>
               <CardContent>
                 {pieDataPositive.length === 0 ? (
-                  <div className="flex items-center justify-center h-64 text-zinc-500 text-sm">
+                  <div className="flex items-center justify-center h-64 text-muted-foreground text-sm">
                     {pieData.length === 0 ? "暂无数据" : "所选范围内用量均为 0，无法绘制占比"}
                   </div>
                 ) : (
@@ -489,13 +489,13 @@ export default function MeteringPage() {
                                 className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ring-1 ring-white/20"
                                 style={{ backgroundColor: COLORS[row.colorIndex % COLORS.length] }}
                               />
-                              <span className="break-words text-zinc-100" title={row.name}>
+                              <span className="break-words text-foreground" title={row.name}>
                                 {row.name}
                               </span>
                             </div>
                             <div className="shrink-0 text-right text-xs tabular-nums">
-                              <div className="text-zinc-100">{fmtUsage(row.value)}</div>
-                              <div className="text-zinc-400">
+                              <div className="text-foreground">{fmtUsage(row.value)}</div>
+                              <div className="text-muted-foreground">
                                 {pct < 0.1 ? "<0.1%" : `${pct.toFixed(1)}%`}
                               </div>
                             </div>
@@ -510,11 +510,11 @@ export default function MeteringPage() {
 
             <Card className="bg-card border-border">
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-zinc-100">服务费用（Top10）</CardTitle>
+                <CardTitle className="text-sm font-medium text-foreground">服务费用（Top10）</CardTitle>
               </CardHeader>
               <CardContent>
                 {byService.length === 0 ? (
-                  <div className="flex items-center justify-center h-64 text-zinc-500 text-sm">暂无数据</div>
+                  <div className="flex items-center justify-center h-64 text-muted-foreground text-sm">暂无数据</div>
                 ) : (
                   <ResponsiveContainer width="100%" height={300}>
                     <BarChart
@@ -562,7 +562,7 @@ export default function MeteringPage() {
       <Card className="bg-card border-border">
         <CardHeader className="pb-2">
           <div className="flex items-center justify-between">
-            <CardTitle className="text-sm font-medium text-zinc-100">用量明细</CardTitle>
+            <CardTitle className="text-sm font-medium text-foreground">用量明细</CardTitle>
             <Badge variant="secondary" className="text-xs">{totalCount.toLocaleString()} 条</Badge>
           </div>
         </CardHeader>
@@ -663,10 +663,10 @@ function SummaryCard({
           >
             <Icon className="h-4 w-4" strokeWidth={2} />
           </div>
-          <span className="text-xs text-zinc-400">{title}</span>
+          <span className="text-xs text-muted-foreground">{title}</span>
         </div>
-        <p className="text-xl font-bold text-zinc-50">{value}</p>
-        {sub && <p className="text-xs text-zinc-500 mt-1">{sub}</p>}
+        <p className="text-xl font-bold text-foreground">{value}</p>
+        {sub && <p className="text-xs text-muted-foreground mt-1">{sub}</p>}
       </CardContent>
     </Card>
   )

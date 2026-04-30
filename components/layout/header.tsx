@@ -39,6 +39,7 @@ import {
   type AzureConsentInvite, type AzureVerifyResult,
 } from "@/lib/api"
 import { useUnreadCount, useNotifications } from "@/hooks/use-data"
+import { ThemeToggle } from "@/components/theme-toggle"
 
 interface SyncStatus {
   status: "idle" | "syncing" | "success" | "error"
@@ -115,9 +116,9 @@ export function Header() {
     }
   }
 
-  const handleSync = async () => {
+  const handleSync = async (provider?: string) => {
     const m = monthStr(new Date())
-    await runSync(m, m)
+    await runSync(m, m, provider)
   }
 
   const [customSyncOpen, setCustomSyncOpen] = useState(false)
@@ -177,6 +178,9 @@ export function Header() {
       </div>
 
       <div className="flex items-center gap-4">
+        {/* Theme toggle (日/夜) */}
+        <ThemeToggle />
+
         {/* Sync Dropdown */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -209,10 +213,22 @@ export function Header() {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56">
-            <DropdownMenuItem onClick={handleSync} disabled={syncStatus.status === "syncing"}>
+            <DropdownMenuItem onClick={() => handleSync()} disabled={syncStatus.status === "syncing"}>
               <RefreshCw className={cn("w-4 h-4 mr-2", syncStatus.status === "syncing" && "animate-spin")} />
-              同步当月数据
+              同步当月数据(全部)
             </DropdownMenuItem>
+            {(["aws", "gcp", "azure", "taiji"] as const).map((p) => (
+              <DropdownMenuItem
+                key={p}
+                onClick={() => handleSync(p)}
+                disabled={syncStatus.status === "syncing"}
+                className="pl-9 text-xs text-muted-foreground"
+              >
+                <span className="mr-2 opacity-50">└</span>
+                仅 {p === "aws" ? "AWS" : p === "gcp" ? "GCP" : p === "azure" ? "Azure" : "Taiji"}
+              </DropdownMenuItem>
+            ))}
+            <DropdownMenuSeparator />
             <DropdownMenuItem
               onClick={() => {
                 const n = monthStr(new Date())
