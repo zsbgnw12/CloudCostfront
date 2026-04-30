@@ -122,7 +122,7 @@ export default function DashboardPage() {
       {/* Charts Row */}
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
         {/* Daily Trend */}
-        <Card className="col-span-1 xl:col-span-2 bg-gradient-to-br from-white/[0.04] to-card/50">
+        <Card className="col-span-1 xl:col-span-2 bg-gradient-to-br from-foreground/[0.04] to-card/50">
           <CardHeader className="pb-2 border-b border-foreground/5 mb-4">
             <CardTitle className="text-base font-semibold tracking-wide text-foreground">每日费用趋势</CardTitle>
           </CardHeader>
@@ -156,7 +156,7 @@ export default function DashboardPage() {
         </Card>
 
         {/* Provider Pie */}
-        <Card className="col-span-1 bg-gradient-to-bl from-white/[0.04] to-card/50">
+        <Card className="col-span-1 bg-gradient-to-bl from-foreground/[0.04] to-card/50">
           <CardHeader className="pb-2 border-b border-foreground/5 mb-4">
             <CardTitle className="text-base font-semibold tracking-wide text-foreground">云厂商费用占比</CardTitle>
           </CardHeader>
@@ -199,7 +199,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Top Services */}
-      <Card className="bg-gradient-to-t from-white/[0.02] to-card/50">
+      <Card className="bg-gradient-to-t from-foreground/[0.02] to-card/50">
         <CardHeader className="pb-2 border-b border-foreground/5 mb-4">
           <CardTitle className="text-base font-semibold tracking-wide text-foreground">Top 10 云服务费用分布</CardTitle>
         </CardHeader>

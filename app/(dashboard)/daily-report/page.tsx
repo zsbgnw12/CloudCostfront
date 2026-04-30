@@ -540,8 +540,8 @@ export default function DailyReportPage() {
                 <div className="overflow-auto max-h-[calc(100vh-360px)]">
                   <table className="w-full text-sm border-collapse">
                     <thead className="sticky top-0 z-10">
-                      <tr className="bg-[#252535]">
-                        <th className="text-left px-3 py-2 font-medium text-muted-foreground whitespace-nowrap border-b border-border sticky left-0 bg-[#252535] z-20 min-w-[200px]">
+                      <tr className="bg-muted">
+                        <th className="text-left px-3 py-2 font-medium text-muted-foreground whitespace-nowrap border-b border-border sticky left-0 bg-muted z-20 min-w-[200px]">
                           分组 / 账号
                         </th>
                         <th className="text-right px-3 py-2 font-medium text-muted-foreground whitespace-nowrap border-b border-border min-w-[100px]">
@@ -568,7 +568,7 @@ export default function DailyReportPage() {
                         />
                       ))}
                       <tr className="bg-primary/10 font-semibold">
-                        <td className="px-3 py-2 text-foreground border-t-2 border-border sticky left-0 bg-[#1e2a3a] z-10">合计</td>
+                        <td className="px-3 py-2 text-foreground border-t-2 border-border sticky left-0 bg-primary/10 z-10">合计</td>
                         <td className="text-right px-3 py-2 text-foreground border-t-2 border-border font-mono text-xs">{formatMoney(pivot.grandTotal)}</td>
                         {pivot.dates.map((d) => (
                           <td key={d} className="text-right px-3 py-2 text-foreground border-t-2 border-border font-mono text-xs">
@@ -726,8 +726,8 @@ function GroupRows({
   return (
     <>
       {/* Group header */}
-      <tr className="bg-[#2a2a3a]">
-        <td className="px-3 py-1.5 font-semibold text-foreground whitespace-nowrap border-b border-border sticky left-0 bg-[#2a2a3a] z-10">
+      <tr className="bg-accent">
+        <td className="px-3 py-1.5 font-semibold text-foreground whitespace-nowrap border-b border-border sticky left-0 bg-accent z-10">
           📁 {group.label}
         </td>
         <td className="text-right px-3 py-1.5 font-semibold text-foreground border-b border-border font-mono text-xs">
@@ -747,7 +747,7 @@ function GroupRows({
       {/* Account rows */}
       {group.accounts.map((acct) => (
         <tr key={acct.id} className="hover:bg-accent/20 transition-colors">
-          <td className="px-3 py-1.5 pl-8 whitespace-nowrap border-b border-border sticky left-0 bg-[#1e1e2e] z-10">
+          <td className="px-3 py-1.5 pl-8 whitespace-nowrap border-b border-border sticky left-0 bg-card z-10">
             <div className="flex flex-col">
               <span className="text-foreground text-sm">{acct.name}</span>
               <span className="text-muted-foreground text-[11px]">{acct.extId}</span>
