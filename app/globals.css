@@ -195,3 +195,166 @@
     cursor: pointer;
   }
 }
+
+/* ========================================
+ * /login 页特效 — 所有 keyframes + classes
+ * 都加 login- 前缀避免跟其他组件冲突。
+ * 之前用 <style jsx> 内联,Next.js 16 + Turbopack
+ * 对内联模板字符串复杂插值 parse 失败,改放这里。
+ * ======================================== */
+@keyframes login-intro-fade {
+  0% { opacity: 1; }
+  70% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes login-pulse-slow {
+  0%, 100% { opacity: 0.5; transform: scale(1); }
+  50% { opacity: 0.7; transform: scale(1.08); }
+}
+@keyframes login-pulse-slow-2 {
+  0%, 100% { opacity: 0.4; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(1.12); }
+}
+@keyframes login-pulse-slow-3 {
+  0%, 100% { opacity: 0.25; transform: scale(0.9) translate(-50%, -50%); }
+  50% { opacity: 0.4; transform: scale(1.1) translate(-50%, -50%); }
+}
+@keyframes login-spin-slow {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+@keyframes login-spin-reverse {
+  from { transform: rotate(360deg); }
+  to   { transform: rotate(0deg); }
+}
+@keyframes login-gradient-flow {
+  0%, 100% { background-position: 0% 50%; }
+  50%      { background-position: 100% 50%; }
+}
+@keyframes login-char-drop {
+  0%   { opacity: 0; transform: translateY(-80px) scale(0.3) rotate(-30deg); filter: blur(20px); }
+  50%  { opacity: 1; filter: blur(0); }
+  100% { opacity: 1; transform: translateY(0) scale(1) rotate(0deg); filter: blur(0); }
+}
+@keyframes login-fade-up {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes login-logo-in {
+  0%   { opacity: 0; transform: scale(0.3) rotate(-180deg); filter: blur(20px); }
+  70%  { opacity: 1; filter: blur(0); transform: scale(1.15) rotate(0); }
+  100% { opacity: 1; transform: scale(1) rotate(0); }
+}
+@keyframes login-button-in {
+  0%   { opacity: 0; transform: translateY(80px) scale(0.5); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes login-scan {
+  0%   { transform: translateY(-100%); opacity: 0; }
+  10%  { opacity: 1; }
+  90%  { opacity: 1; }
+  100% { transform: translateY(100vh); opacity: 0; }
+}
+@keyframes login-grid-shift {
+  from { background-position: 0 0; }
+  to   { background-position: 60px 60px; }
+}
+@keyframes login-flow-draw {
+  0%   { stroke-dasharray: 0 4000; opacity: 0; }
+  15%  { opacity: 1; }
+  85%  { opacity: 1; }
+  100% { stroke-dasharray: 4000 0; opacity: 0; }
+}
+@keyframes login-satellite-1 {
+  0%   { transform: translate(-50%, -50%) rotate(0deg) translate(60px) rotate(0deg); }
+  100% { transform: translate(-50%, -50%) rotate(360deg) translate(60px) rotate(-360deg); }
+}
+@keyframes login-satellite-2 {
+  0%   { transform: translate(-50%, -50%) rotate(120deg) translate(60px) rotate(-120deg); }
+  100% { transform: translate(-50%, -50%) rotate(480deg) translate(60px) rotate(-480deg); }
+}
+@keyframes login-satellite-3 {
+  0%   { transform: translate(-50%, -50%) rotate(240deg) translate(60px) rotate(-240deg); }
+  100% { transform: translate(-50%, -50%) rotate(600deg) translate(60px) rotate(-600deg); }
+}
+@keyframes login-redirect-overlay {
+  0%   { opacity: 0; backdrop-filter: blur(0); }
+  100% { opacity: 1; backdrop-filter: blur(8px); }
+}
+@keyframes login-spin-fast {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+@keyframes login-spin-reverse-fast {
+  from { transform: rotate(360deg); }
+  to { transform: rotate(0deg); }
+}
+@keyframes login-bounce-dot {
+  0%, 80%, 100% { transform: translateY(0); opacity: 0.6; }
+  40% { transform: translateY(-12px); opacity: 1; }
+}
+@keyframes login-ripple {
+  0%   { transform: translate(-50%, -50%) scale(0.5); opacity: 0.9; }
+  100% { transform: translate(-50%, -50%) scale(8); opacity: 0; }
+}
+@keyframes login-progress {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(0%); }
+}
+
+.login-intro-fade        { animation: login-intro-fade 0.8s ease-out forwards; }
+.login-pulse-slow        { animation: login-pulse-slow 6s ease-in-out infinite; }
+.login-pulse-slow-2      { animation: login-pulse-slow-2 8s ease-in-out infinite; }
+.login-pulse-slow-3      { animation: login-pulse-slow-3 10s ease-in-out infinite; }
+.login-spin-slow         { animation: login-spin-slow 12s linear infinite; }
+.login-spin-reverse      { animation: login-spin-reverse 8s linear infinite; }
+.login-fade-up           { opacity: 0; animation: login-fade-up 1.2s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+.login-logo-in           { opacity: 0; animation: login-logo-in 1.0s cubic-bezier(0.34, 1.56, 0.64, 1) 0.4s forwards; }
+.login-button-in         { opacity: 0; animation: login-button-in 0.8s cubic-bezier(0.34, 1.56, 0.64, 1) 2.4s forwards; }
+.login-redirect-overlay  { animation: login-redirect-overlay 0.4s ease-out forwards; }
+.login-spin-fast         { animation: login-spin-fast 1.5s linear infinite; }
+.login-spin-reverse-fast { animation: login-spin-reverse-fast 2s linear infinite; }
+.login-bounce-dot        { animation: login-bounce-dot 1.4s ease-in-out infinite; }
+.login-ripple            { animation: login-ripple 2.5s ease-out infinite; }
+.login-progress          { animation: login-progress 1.4s ease-out forwards; }
+.login-delay-200         { animation-delay: 0.2s; }
+.login-delay-400         { animation-delay: 0.4s; }
+.login-delay-600         { animation-delay: 0.6s; }
+.login-delay-700         { animation-delay: 0.7s; }
+.login-delay-1000        { animation-delay: 1s; }
+
+.login-scan-line::before {
+  content: "";
+  position: absolute;
+  left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(to right,
+    transparent 0%,
+    rgba(99,179,237,0.6) 20%,
+    rgba(167,139,250,0.85) 50%,
+    rgba(99,179,237,0.6) 80%,
+    transparent 100%);
+  box-shadow: 0 0 20px rgba(99,179,237,0.6);
+  animation: login-scan 5s linear infinite;
+}
+.login-grid-perspective { animation: login-grid-shift 5s linear infinite; }
+
+.login-flow-path-1, .login-flow-path-2, .login-flow-path-3 {
+  stroke-dasharray: 1000;
+  stroke-dashoffset: 1000;
+  animation: login-flow-draw 8s ease-in-out infinite;
+}
+.login-flow-path-2 { animation-delay: 2.5s; animation-duration: 9s; }
+.login-flow-path-3 { animation-delay: 5s; animation-duration: 10s; }
+
+.login-satellite-1, .login-satellite-2, .login-satellite-3 {
+  top: 50%; left: 50%;
+}
+.login-satellite-1 { animation: login-satellite-1 4s linear infinite; }
+.login-satellite-2 { animation: login-satellite-2 5s linear infinite; }
+.login-satellite-3 { animation: login-satellite-3 6s linear infinite; }
+
+.login-gradient-flow {
+  background-size: 200% 200%;
+  animation: login-gradient-flow 4s ease-in-out infinite;
+}
