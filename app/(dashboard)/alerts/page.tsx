@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback, useMemo } from "react"
-import { Plus, MoreHorizontal, Bell, History, BarChart3, Loader2, CheckCircle2, AlertTriangle } from "lucide-react"
+import { Plus, MoreHorizontal, Bell, History, BarChart3, Loader2, CheckCircle2, AlertTriangle, Layers } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -114,6 +114,43 @@ export default function AlertsPage() {
     return a ? `${a.name} (${a.external_project_id})` : targetId
   }
 
+  // editingId === null → 添加;否则编辑现有规则
+  const [editingId, setEditingId] = useState<number | null>(null)
+
+  const openEditDialog = (rule: AlertRule) => {
+    setEditingId(rule.id)
+    // 基础字段回填
+    const base = {
+      name: rule.name,
+      threshold_type: rule.threshold_type,
+      threshold_value: String(rule.threshold_value ?? ""),
+      notify_webhook: rule.notify_webhook ?? "",
+      notify_email: rule.notify_email ?? "",
+      supplier_id: "",
+      supply_source_id: "",
+      account_id: "",
+      multi_account_ids: [] as number[],
+    }
+    // 多项目类型:把逗号分隔的 external_project_id 反查回 account.id 列表
+    if (rule.threshold_type === "monthly_budget_multi" && rule.target_id) {
+      const ids = rule.target_id.split(",").map((s) => s.trim()).filter(Boolean)
+      base.multi_account_ids = accounts
+        .filter((a) => ids.includes(a.external_project_id))
+        .map((a) => a.id)
+    } else if (rule.target_id) {
+      // 单 project:回填三级选择器
+      const acc = accounts.find((a) => a.external_project_id === rule.target_id)
+      if (acc) {
+        const ss = supplySources.find((s) => s.id === acc.supply_source_id)
+        base.supplier_id = String(ss?.supplier_id ?? "")
+        base.supply_source_id = String(acc.supply_source_id)
+        base.account_id = String(acc.id)
+      }
+    }
+    setForm(base)
+    setDialogOpen(true)
+  }
+
   const handleSave = async () => {
     try {
       setActionLoading("save")
@@ -128,7 +165,7 @@ export default function AlertsPage() {
         const account = accounts.find((a) => String(a.id) === form.account_id)
         target_id = account?.external_project_id ?? undefined
       }
-      await alertsApi.createRule({
+      const payload = {
         name: form.name,
         target_type,
         target_id,
@@ -136,9 +173,17 @@ export default function AlertsPage() {
         threshold_value: Number(form.threshold_value),
         notify_webhook: form.notify_webhook || undefined,
         notify_email: form.notify_email || undefined,
-      })
-      setDialogOpen(false); resetForm(); await load()
-    } catch (e) { alert(`创建失败: ${e instanceof Error ? e.message : e}`) }
+      }
+      if (editingId === null) {
+        await alertsApi.createRule(payload)
+      } else {
+        await alertsApi.updateRule(editingId, payload)
+      }
+      setDialogOpen(false)
+      resetForm()
+      setEditingId(null)
+      await load()
+    } catch (e) { alert(`${editingId === null ? "创建" : "保存"}失败: ${e instanceof Error ? e.message : e}`) }
     finally { setActionLoading(null) }
   }
 
@@ -165,10 +210,27 @@ export default function AlertsPage() {
     <div className="space-y-6 p-6">
       <div className="flex items-center justify-between">
         <div><h1 className="text-2xl font-semibold text-foreground">告警管理</h1><p className="text-sm text-muted-foreground mt-1">配置服务账号费用告警规则，监控承诺用量达标情况</p></div>
-        <Dialog open={dialogOpen} onOpenChange={(o) => { setDialogOpen(o); if (!o) resetForm() }}>
-          <DialogTrigger asChild><Button className="gap-2"><Plus className="w-4 h-4" />添加规则</Button></DialogTrigger>
+        <Dialog
+          open={dialogOpen}
+          onOpenChange={(o) => {
+            setDialogOpen(o)
+            if (!o) { resetForm(); setEditingId(null) }
+          }}
+        >
+          <DialogTrigger asChild>
+            <Button className="gap-2" onClick={() => { setEditingId(null); resetForm() }}>
+              <Plus className="w-4 h-4" />添加规则
+            </Button>
+          </DialogTrigger>
           <DialogContent>
-            <DialogHeader><DialogTitle>添加告警规则</DialogTitle><DialogDescription>当服务账号费用超出阈值或未达承诺用量时触发告警</DialogDescription></DialogHeader>
+            <DialogHeader>
+              <DialogTitle>{editingId === null ? "添加告警规则" : "编辑告警规则"}</DialogTitle>
+              <DialogDescription>
+                {editingId === null
+                  ? "当服务账号费用超出阈值或未达承诺用量时触发告警"
+                  : "修改后保存,改动立即生效。多项目类型可在"账号选择"勾选/取消项目以扩缩范围。"}
+              </DialogDescription>
+            </DialogHeader>
             <div className="space-y-4 py-4">
               <div className="space-y-2"><Label>规则名称</Label><Input placeholder="如：账号A日费用超限" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
 
@@ -305,7 +367,7 @@ export default function AlertsPage() {
               <div className="space-y-2"><Label>通知邮箱（多个用逗号分隔，可选）</Label><Input placeholder="admin@example.com, ops@example.com" value={form.notify_email} onChange={(e) => setForm({ ...form, notify_email: e.target.value })} /></div>
               <div className="space-y-2"><Label>Webhook 通知地址（可选）</Label><Input placeholder="https://..." value={form.notify_webhook} onChange={(e) => setForm({ ...form, notify_webhook: e.target.value })} /></div>
             </div>
-            <DialogFooter><Button variant="outline" onClick={() => { setDialogOpen(false); resetForm() }}>取消</Button><Button onClick={handleSave} disabled={
+            <DialogFooter><Button variant="outline" onClick={() => { setDialogOpen(false); resetForm(); setEditingId(null) }}>取消</Button><Button onClick={handleSave} disabled={
               !form.name ||
               !form.threshold_value ||
               actionLoading === "save" ||
@@ -313,7 +375,7 @@ export default function AlertsPage() {
                 ? form.multi_account_ids.length === 0
                 : !form.account_id)
             }>
-              {actionLoading === "save" && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}添加
+              {actionLoading === "save" && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}{editingId === null ? "添加" : "保存"}
             </Button></DialogFooter>
           </DialogContent>
         </Dialog>
@@ -354,7 +416,9 @@ export default function AlertsPage() {
                         <div key={s.rule_id} className="space-y-2 p-4 rounded-lg bg-secondary/30">
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2.5">
-                              <img src={`/${s.provider}.svg`} alt={s.provider} className="w-5 h-5" />
+                              {s.provider === "multi"
+                                ? <span className="inline-flex items-center justify-center w-5 h-5 rounded bg-foreground/10 text-foreground/70" title="多项目"><Layers className="w-3.5 h-3.5" /></span>
+                                : <img src={`/${s.provider}.svg`} alt={s.provider} className="w-5 h-5" />}
                               <span className="text-sm font-medium text-foreground">{s.rule_name}</span>
                               <Badge variant="secondary" className="text-[10px]">{THRESHOLD_LABELS[s.threshold_type]}</Badge>
                             </div>
@@ -407,7 +471,9 @@ export default function AlertsPage() {
                         <div key={s.rule_id} className="space-y-2 p-4 rounded-lg bg-secondary/30">
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2.5">
-                              <img src={`/${s.provider}.svg`} alt={s.provider} className="w-5 h-5" />
+                              {s.provider === "multi"
+                                ? <span className="inline-flex items-center justify-center w-5 h-5 rounded bg-foreground/10 text-foreground/70" title="多项目"><Layers className="w-3.5 h-3.5" /></span>
+                                : <img src={`/${s.provider}.svg`} alt={s.provider} className="w-5 h-5" />}
                               <span className="text-sm font-medium text-foreground">{s.rule_name}</span>
                             </div>
                             <div className="flex items-center gap-2">
@@ -466,7 +532,11 @@ export default function AlertsPage() {
                   <TableCell>{r.is_active ? <Badge variant="secondary" className="bg-green-500/20 text-green-400">启用</Badge> : <Badge variant="secondary">停用</Badge>}</TableCell>
                   <TableCell className="text-right">
                     <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal className="w-4 h-4" /></Button></DropdownMenuTrigger>
-                      <DropdownMenuContent align="end"><DropdownMenuItem onClick={() => handleToggle(r)}>{r.is_active ? "停用" : "启用"}</DropdownMenuItem><DropdownMenuItem className="text-destructive" onClick={() => handleDelete(r.id)}>删除</DropdownMenuItem></DropdownMenuContent>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => openEditDialog(r)}>编辑</DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => handleToggle(r)}>{r.is_active ? "停用" : "启用"}</DropdownMenuItem>
+                        <DropdownMenuItem className="text-destructive" onClick={() => handleDelete(r.id)}>删除</DropdownMenuItem>
+                      </DropdownMenuContent>
                     </DropdownMenu>
                   </TableCell>
                 </TableRow>

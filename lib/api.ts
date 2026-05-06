@@ -1137,4 +1137,13 @@ export const azureConsentApi = {
     request<{ ok: boolean; message: string }>(`/api/azure-consent/invites/${inviteId}/revoke`, {
       method: "POST",
     }),
+
+  deleteInvite: (inviteId: number) =>
+    request<void>(`/api/azure-consent/invites/${inviteId}`, { method: "DELETE" }),
+
+  deleteInvitesBulk: (onlyStatus?: "expired" | "consumed" | "pending") =>
+    request<void>(
+      `/api/azure-consent/invites${onlyStatus ? `?only_status=${onlyStatus}` : ""}`,
+      { method: "DELETE" },
+    ),
 }

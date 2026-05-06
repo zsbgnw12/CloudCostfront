@@ -526,6 +526,23 @@ function InvitationsMenu() {
     } catch (e) { alert(`作废失败: ${e instanceof Error ? e.message : e}`) }
   }
 
+  const handleDeleteInvite = async (id: number) => {
+    try {
+      await azureConsentApi.deleteInvite(id)
+      mutate()
+    } catch (e) { alert(`删除失败: ${e instanceof Error ? e.message : e}`) }
+  }
+
+  const handleClearInvites = async () => {
+    if (!confirm("清空所有非待同意邀请记录?(已作废 + 已验证 + 已使用)")) return
+    try {
+      // 先删 expired 再删 consumed,保留 pending
+      await azureConsentApi.deleteInvitesBulk("expired")
+      await azureConsentApi.deleteInvitesBulk("consumed")
+      mutate()
+    } catch (e) { alert(`清空失败: ${e instanceof Error ? e.message : e}`) }
+  }
+
   const handleVerify = async (accountId: number) => {
     setVerifyOpen(true)
     setVerifying(true)
@@ -560,11 +577,22 @@ function InvitationsMenu() {
         <DropdownMenuContent align="end" className="w-96">
           <DropdownMenuLabel className="flex items-center justify-between">
             <span>Azure 接入邀请</span>
-            <span className="text-xs text-muted-foreground font-normal">
-              {pendingCount > 0 && <>待同意 {pendingCount}</>}
-              {pendingCount > 0 && unverifiedCount > 0 && " · "}
-              {unverifiedCount > 0 && <>待验证 {unverifiedCount}</>}
-            </span>
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-muted-foreground font-normal">
+                {pendingCount > 0 && <>待同意 {pendingCount}</>}
+                {pendingCount > 0 && unverifiedCount > 0 && " · "}
+                {unverifiedCount > 0 && <>待验证 {unverifiedCount}</>}
+              </span>
+              {list.length > 0 && (
+                <Button
+                  variant="ghost" size="sm"
+                  className="text-xs text-destructive hover:text-destructive h-auto p-0 font-normal"
+                  onClick={handleClearInvites}
+                >
+                  清空
+                </Button>
+              )}
+            </div>
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
           {list.length === 0 ? (
@@ -616,6 +644,16 @@ function InvitationsMenu() {
                         <CheckCircle2 className="w-3 h-3 mr-1" /> 验证订阅
                       </Button>
                     )}
+                    {/* 删除按钮:任意状态都允许删(非可逆,二次确认) */}
+                    <Button
+                      variant="ghost" size="sm"
+                      className="h-7 text-xs text-destructive hover:text-destructive ml-auto"
+                      onClick={() => {
+                        if (confirm(`删除邀请记录「${inv.account_name}」?`)) handleDeleteInvite(inv.id)
+                      }}
+                    >
+                      删除
+                    </Button>
                   </div>
                 </div>
               )
