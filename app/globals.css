@@ -99,6 +99,57 @@
   --status-recycled: oklch(0.5 0 0);
 }
 
+/* ─── Neon theme (霓虹·赛博) — 与 /login 同色调:深午夜蓝 + 蓝/青/紫/品红 霓虹辉光 ─── */
+/* 通过 next-themes 同时挂 `dark neon` 两个 class —— `.dark` 规则继续生效,`.neon` 覆盖。
+   所以这块必须放在 `.dark` 之后,确保 cascade 顺序正确。 */
+.neon {
+  --background: oklch(0.14 0.04 265);             /* ~ #080c18 */
+  --foreground: oklch(0.97 0.01 240);
+  --card: oklch(0.18 0.06 265 / 0.5);             /* glassmorphism 深蓝 */
+  --card-foreground: oklch(0.97 0.01 240);
+  --popover: oklch(0.18 0.06 265 / 0.92);
+  --popover-foreground: oklch(0.97 0.01 240);
+  --primary: oklch(0.68 0.22 275);                /* 紫霓虹主按钮 */
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(0.25 0.08 270 / 0.55);
+  --secondary-foreground: oklch(0.97 0.01 240);
+  --muted: oklch(0.22 0.06 265 / 0.5);
+  --muted-foreground: oklch(0.72 0.06 250);
+  --accent: oklch(0.6 0.22 240);                  /* 蓝霓虹高亮 */
+  --accent-foreground: oklch(0.99 0 0);
+  --destructive: oklch(0.65 0.27 20);
+  --destructive-foreground: oklch(1 0 0);
+  --border: oklch(0.55 0.18 260 / 0.28);          /* 青蓝半透分割 */
+  --input: oklch(0.2 0.05 265 / 0.6);
+  --ring: oklch(0.7 0.22 270 / 0.6);
+
+  --chart-1: oklch(0.78 0.2 240);                 /* cyan-blue */
+  --chart-2: oklch(0.72 0.22 290);                /* purple */
+  --chart-3: oklch(0.8 0.18 200);                 /* sky */
+  --chart-4: oklch(0.74 0.22 330);                /* pink */
+  --chart-5: oklch(0.78 0.18 165);                /* teal */
+
+  --aws: oklch(0.8 0.18 55);
+  --gcp: oklch(0.75 0.2 150);
+  --azure: oklch(0.72 0.22 245);
+
+  --sidebar: oklch(0.13 0.05 265 / 0.65);
+  --sidebar-foreground: oklch(0.88 0.04 250);
+  --sidebar-primary: oklch(0.68 0.22 275);
+  --sidebar-primary-foreground: oklch(0.99 0 0);
+  --sidebar-accent: oklch(0.22 0.08 270 / 0.5);
+  --sidebar-accent-foreground: oklch(0.97 0.01 240);
+  --sidebar-border: oklch(0.55 0.18 260 / 0.2);
+  --sidebar-ring: oklch(0.7 0.22 270 / 0.6);
+
+  --status-active: oklch(0.78 0.18 165);
+  --status-standby: oklch(0.72 0.2 245);
+  --status-suspended: oklch(0.8 0.18 55);
+  --status-recycled: oklch(0.6 0.05 250);
+
+  color-scheme: dark;
+}
+
 @theme inline {
   --font-sans: 'Geist', 'Geist Fallback';
   --font-mono: 'Geist Mono', 'Geist Mono Fallback';
@@ -172,6 +223,45 @@
     background-image:
       radial-gradient(100% 100% at 50% 0%, oklch(0.96 0.005 250 / 0.6) 0%, transparent 50%),
       radial-gradient(100% 100% at 100% 100%, oklch(0.94 0.01 145 / 0.4) 0%, transparent 40%);
+  }
+  /* Neon 主题专属:多层霓虹辉光 + 暗夜网格,与 /login 页统一 */
+  .neon body {
+    background-color: oklch(0.14 0.04 265);
+    background-image:
+      radial-gradient(60% 60% at 20% 10%, oklch(0.55 0.22 270 / 0.35) 0%, transparent 60%),
+      radial-gradient(55% 55% at 90% 20%, oklch(0.6 0.22 240 / 0.32) 0%, transparent 60%),
+      radial-gradient(50% 50% at 70% 100%, oklch(0.6 0.22 320 / 0.28) 0%, transparent 60%),
+      radial-gradient(45% 45% at 0% 90%, oklch(0.6 0.22 200 / 0.30) 0%, transparent 60%),
+      linear-gradient(to right, oklch(0.6 0.18 260 / 0.06) 1px, transparent 1px),
+      linear-gradient(to bottom, oklch(0.6 0.18 260 / 0.06) 1px, transparent 1px);
+    background-size: auto, auto, auto, auto, 64px 64px, 64px 64px;
+  }
+  /* Neon 卡片/侧边栏:玻璃感 + 极淡霓虹边框 */
+  .neon [data-slot="card"],
+  .neon .glass-card {
+    backdrop-filter: blur(14px) saturate(140%);
+    -webkit-backdrop-filter: blur(14px) saturate(140%);
+    box-shadow:
+      0 1px 0 0 oklch(0.7 0.18 260 / 0.08) inset,
+      0 8px 28px -12px oklch(0.45 0.22 270 / 0.45);
+  }
+  .neon [data-sidebar="sidebar"] {
+    backdrop-filter: blur(20px) saturate(140%);
+    -webkit-backdrop-filter: blur(20px) saturate(140%);
+  }
+  /* Neon 主按钮霓虹辉光 */
+  .neon button[data-slot="button"][data-variant="default"],
+  .neon .btn-neon {
+    background-image: linear-gradient(135deg, oklch(0.6 0.22 240) 0%, oklch(0.62 0.24 270) 50%, oklch(0.62 0.24 320) 100%);
+    box-shadow: 0 0 0 1px oklch(0.7 0.22 270 / 0.4), 0 8px 28px -8px oklch(0.55 0.25 270 / 0.55);
+  }
+  .neon button[data-slot="button"][data-variant="default"]:hover {
+    box-shadow: 0 0 0 1px oklch(0.75 0.22 270 / 0.6), 0 12px 40px -8px oklch(0.6 0.28 290 / 0.7);
+  }
+  /* Neon 链接/选中态文字渐变 */
+  .neon a:hover,
+  .neon [data-active="true"] {
+    color: oklch(0.85 0.18 240);
   }
   
   /* Global smooth transitions for common interactive elements */
