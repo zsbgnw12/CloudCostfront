@@ -361,7 +361,8 @@ export interface CurrentUser {
 export const authApi = {
   me: () => request<CurrentUser>("/api/auth/me"),
   logout: () => request<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
-  loginUrl: () => `${API_BASE}/api/auth/login?redirect=true`,
+  loginUrl: (force = false) =>
+    `${API_BASE}/api/auth/login?redirect=true${force ? "&force=true" : ""}`,
 }
 
 export const accountsApi = {
