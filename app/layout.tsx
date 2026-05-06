@@ -45,7 +45,6 @@ export default function RootLayout({
           enableSystem={false}
           disableTransitionOnChange
           themes={['light', 'dark', 'neon']}
-          value={{ light: 'light', dark: 'dark', neon: 'dark neon' }}
         >
           <SWRProvider>
             {children}
