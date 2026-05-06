@@ -224,44 +224,242 @@
       radial-gradient(100% 100% at 50% 0%, oklch(0.96 0.005 250 / 0.6) 0%, transparent 50%),
       radial-gradient(100% 100% at 100% 100%, oklch(0.94 0.01 145 / 0.4) 0%, transparent 40%);
   }
-  /* Neon 主题专属:多层霓虹辉光 + 暗夜网格,与 /login 页统一 */
+  /* ════════════════════════════════════════════════════════
+   * Neon 主题:与 /login 页同款震撼特效。所有动效用纯 CSS,
+   * 不上 canvas/JS,既炫酷又不烧 CPU。
+   * 层级:
+   *   body                — 深蓝底
+   *   body::before        — 慢速漂移的 3 团巨型辉光(blob)
+   *   body::after         — 闪烁星点 + 慢速漂移的网格
+   * ═══════════════════════════════════════════════════════ */
   .neon body {
     background-color: oklch(0.14 0.04 265);
-    background-image:
-      radial-gradient(60% 60% at 20% 10%, oklch(0.55 0.22 270 / 0.35) 0%, transparent 60%),
-      radial-gradient(55% 55% at 90% 20%, oklch(0.6 0.22 240 / 0.32) 0%, transparent 60%),
-      radial-gradient(50% 50% at 70% 100%, oklch(0.6 0.22 320 / 0.28) 0%, transparent 60%),
-      radial-gradient(45% 45% at 0% 90%, oklch(0.6 0.22 200 / 0.30) 0%, transparent 60%),
-      linear-gradient(to right, oklch(0.6 0.18 260 / 0.06) 1px, transparent 1px),
-      linear-gradient(to bottom, oklch(0.6 0.18 260 / 0.06) 1px, transparent 1px);
-    background-size: auto, auto, auto, auto, 64px 64px, 64px 64px;
+    background-image: none;
+    position: relative;
   }
-  /* Neon 卡片/侧边栏:玻璃感 + 极淡霓虹边框 */
-  .neon [data-slot="card"],
-  .neon .glass-card {
+  .neon body::before {
+    content: "";
+    position: fixed;
+    inset: -10% -10% -10% -10%;
+    z-index: -2;
+    pointer-events: none;
+    background-image:
+      radial-gradient(40% 40% at 20% 30%, oklch(0.6 0.25 270 / 0.55) 0%, transparent 70%),
+      radial-gradient(35% 35% at 80% 20%, oklch(0.65 0.25 235 / 0.50) 0%, transparent 70%),
+      radial-gradient(38% 38% at 70% 80%, oklch(0.6 0.25 320 / 0.45) 0%, transparent 70%),
+      radial-gradient(30% 30% at 10% 85%, oklch(0.65 0.25 195 / 0.42) 0%, transparent 70%);
+    filter: blur(20px) saturate(140%);
+    animation: neon-blob-drift 22s ease-in-out infinite alternate;
+    will-change: transform;
+  }
+  .neon body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background-image:
+      /* 64px 蓝紫网格 */
+      linear-gradient(to right, oklch(0.6 0.18 260 / 0.07) 1px, transparent 1px),
+      linear-gradient(to bottom, oklch(0.6 0.18 260 / 0.07) 1px, transparent 1px),
+      /* 闪烁星点 — 每个不同位置不同色,叠加有"星空"感 */
+      radial-gradient(1.5px 1.5px at 12% 18%, oklch(0.95 0.05 240 / 0.9), transparent 60%),
+      radial-gradient(1px 1px at 27% 64%, oklch(0.92 0.10 290 / 0.8), transparent 60%),
+      radial-gradient(1.2px 1.2px at 48% 32%, oklch(0.95 0.05 200 / 0.85), transparent 60%),
+      radial-gradient(1px 1px at 67% 78%, oklch(0.92 0.10 320 / 0.8), transparent 60%),
+      radial-gradient(1.5px 1.5px at 84% 22%, oklch(0.95 0.05 240 / 0.9), transparent 60%),
+      radial-gradient(1px 1px at 93% 60%, oklch(0.92 0.10 280 / 0.8), transparent 60%),
+      radial-gradient(1px 1px at 5%  46%, oklch(0.95 0.05 220 / 0.7), transparent 60%),
+      radial-gradient(1.2px 1.2px at 38% 88%, oklch(0.92 0.10 200 / 0.8), transparent 60%);
+    background-size:
+      64px 64px, 64px 64px,
+      auto, auto, auto, auto, auto, auto, auto, auto;
+    animation: neon-grid-drift 60s linear infinite, neon-stars-twinkle 4s ease-in-out infinite alternate;
+  }
+  @keyframes neon-blob-drift {
+    0%   { transform: translate(0, 0) scale(1); }
+    50%  { transform: translate(-3%, 2%) scale(1.05); }
+    100% { transform: translate(2%, -2%) scale(0.98); }
+  }
+  @keyframes neon-grid-drift {
+    0%   { background-position: 0 0, 0 0, 0 0, 0 0, 0 0, 0 0, 0 0, 0 0, 0 0, 0 0; }
+    100% { background-position: 64px 64px, 64px 64px, 0 0, 0 0, 0 0, 0 0, 0 0, 0 0, 0 0, 0 0; }
+  }
+  @keyframes neon-stars-twinkle {
+    0%   { opacity: 0.55; }
+    100% { opacity: 1; }
+  }
+  /* Neon 卡片:玻璃感 + 内描边光 + hover 时旋转 conic-gradient 边框 */
+  .neon [data-slot="card"] {
+    position: relative;
     backdrop-filter: blur(14px) saturate(140%);
     -webkit-backdrop-filter: blur(14px) saturate(140%);
+    background: linear-gradient(135deg,
+      oklch(0.18 0.07 270 / 0.55) 0%,
+      oklch(0.16 0.06 250 / 0.45) 100%);
     box-shadow:
-      0 1px 0 0 oklch(0.7 0.18 260 / 0.08) inset,
-      0 8px 28px -12px oklch(0.45 0.22 270 / 0.45);
+      0 1px 0 0 oklch(0.85 0.15 270 / 0.10) inset,
+      0 0 0 1px oklch(0.55 0.20 260 / 0.20) inset,
+      0 12px 36px -16px oklch(0.45 0.25 270 / 0.55);
+    transition: box-shadow 0.4s ease, transform 0.4s ease;
   }
+  /* 旋转 conic 光环描边 — 默认半透,hover 时转动 */
+  .neon [data-slot="card"]::before {
+    content: "";
+    position: absolute;
+    inset: -1px;
+    border-radius: inherit;
+    padding: 1px;
+    background: conic-gradient(from var(--neon-card-angle, 0deg),
+      oklch(0.7 0.25 240 / 0.0),
+      oklch(0.75 0.25 270 / 0.6),
+      oklch(0.7 0.25 320 / 0.6),
+      oklch(0.75 0.25 200 / 0.6),
+      oklch(0.7 0.25 240 / 0.0) 60%);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+            mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+            mask-composite: exclude;
+    opacity: 0.35;
+    pointer-events: none;
+    transition: opacity 0.4s ease;
+    animation: neon-card-rotate 8s linear infinite;
+  }
+  .neon [data-slot="card"]:hover {
+    box-shadow:
+      0 1px 0 0 oklch(0.9 0.15 270 / 0.18) inset,
+      0 0 0 1px oklch(0.7 0.25 270 / 0.40) inset,
+      0 24px 60px -20px oklch(0.55 0.30 290 / 0.7);
+    transform: translateY(-2px);
+  }
+  .neon [data-slot="card"]:hover::before {
+    opacity: 0.95;
+  }
+  /* 用 @property 让 --neon-card-angle 真正可被 CSS 动画 — 不支持的浏览器降级为静态边框 */
+  @property --neon-card-angle {
+    syntax: "<angle>";
+    inherits: false;
+    initial-value: 0deg;
+  }
+  @keyframes neon-card-rotate {
+    to { --neon-card-angle: 360deg; }
+  }
+
+  /* Sidebar:玻璃感 + 左侧霓虹竖光带 */
   .neon [data-sidebar="sidebar"] {
     backdrop-filter: blur(20px) saturate(140%);
     -webkit-backdrop-filter: blur(20px) saturate(140%);
+    background: linear-gradient(180deg,
+      oklch(0.16 0.06 270 / 0.65) 0%,
+      oklch(0.14 0.05 260 / 0.55) 100%);
+    border-right: 1px solid oklch(0.55 0.20 260 / 0.25);
+    box-shadow: 1px 0 30px -8px oklch(0.5 0.25 270 / 0.5);
   }
-  /* Neon 主按钮霓虹辉光 */
+  /* Sidebar 选中项:渐变流动背景 */
+  .neon [data-sidebar="menu-button"][data-active="true"],
+  .neon [data-active="true"] {
+    background: linear-gradient(90deg,
+      oklch(0.5 0.25 240 / 0.35) 0%,
+      oklch(0.55 0.25 280 / 0.25) 50%,
+      oklch(0.5 0.25 320 / 0.20) 100%);
+    box-shadow: 0 0 0 1px oklch(0.7 0.25 270 / 0.35) inset,
+                0 0 20px -4px oklch(0.6 0.25 270 / 0.5);
+    color: oklch(0.95 0.05 240);
+  }
+
+  /* Neon 主按钮:渐变 + shimmer sweep */
   .neon button[data-slot="button"][data-variant="default"],
   .neon .btn-neon {
-    background-image: linear-gradient(135deg, oklch(0.6 0.22 240) 0%, oklch(0.62 0.24 270) 50%, oklch(0.62 0.24 320) 100%);
-    box-shadow: 0 0 0 1px oklch(0.7 0.22 270 / 0.4), 0 8px 28px -8px oklch(0.55 0.25 270 / 0.55);
+    position: relative;
+    overflow: hidden;
+    background-image: linear-gradient(135deg,
+      oklch(0.6 0.24 240) 0%,
+      oklch(0.62 0.26 270) 50%,
+      oklch(0.62 0.26 320) 100%);
+    box-shadow:
+      0 0 0 1px oklch(0.75 0.25 270 / 0.5),
+      0 0 20px -4px oklch(0.6 0.28 280 / 0.55),
+      0 8px 28px -8px oklch(0.55 0.28 270 / 0.55);
+  }
+  .neon button[data-slot="button"][data-variant="default"]::after,
+  .neon .btn-neon::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(120deg,
+      transparent 30%,
+      oklch(1 0 0 / 0.35) 50%,
+      transparent 70%);
+    transform: translateX(-100%);
+    transition: transform 0.7s ease;
+    pointer-events: none;
+  }
+  .neon button[data-slot="button"][data-variant="default"]:hover::after,
+  .neon .btn-neon:hover::after {
+    transform: translateX(100%);
   }
   .neon button[data-slot="button"][data-variant="default"]:hover {
-    box-shadow: 0 0 0 1px oklch(0.75 0.22 270 / 0.6), 0 12px 40px -8px oklch(0.6 0.28 290 / 0.7);
+    box-shadow:
+      0 0 0 1px oklch(0.85 0.25 270 / 0.7),
+      0 0 32px -4px oklch(0.7 0.30 290 / 0.8),
+      0 12px 40px -8px oklch(0.6 0.30 290 / 0.7);
   }
-  /* Neon 链接/选中态文字渐变 */
-  .neon a:hover,
-  .neon [data-active="true"] {
-    color: oklch(0.85 0.18 240);
+
+  /* 输入框聚焦霓虹光环 */
+  .neon input:focus-visible,
+  .neon textarea:focus-visible,
+  .neon [data-slot="select-trigger"]:focus-visible {
+    outline: none;
+    box-shadow:
+      0 0 0 1px oklch(0.7 0.25 270 / 0.7),
+      0 0 18px -2px oklch(0.65 0.28 270 / 0.6);
+  }
+
+  /* Dashboard 大标题:流动渐变文字 */
+  .neon h1.text-3xl,
+  .neon h1.text-4xl {
+    background: linear-gradient(90deg,
+      oklch(0.92 0.10 240),
+      oklch(0.90 0.15 280),
+      oklch(0.92 0.12 320),
+      oklch(0.90 0.15 220),
+      oklch(0.92 0.10 240));
+    background-size: 300% 100%;
+    -webkit-background-clip: text;
+            background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+    animation: neon-title-flow 8s linear infinite;
+  }
+  @keyframes neon-title-flow {
+    to { background-position: 300% 0; }
+  }
+
+  /* Badge / 链接 hover */
+  .neon a:hover {
+    color: oklch(0.88 0.15 240);
+    text-shadow: 0 0 12px oklch(0.7 0.25 260 / 0.6);
+  }
+
+  /* 滚动条改成霓虹 */
+  .neon ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  .neon ::-webkit-scrollbar-track {
+    background: oklch(0.16 0.05 260 / 0.4);
+  }
+  .neon ::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg,
+      oklch(0.55 0.22 240 / 0.7),
+      oklch(0.55 0.24 290 / 0.7));
+    border-radius: 5px;
+    box-shadow: 0 0 8px oklch(0.6 0.25 270 / 0.5);
+  }
+  .neon ::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(180deg,
+      oklch(0.7 0.25 240 / 0.9),
+      oklch(0.7 0.27 290 / 0.9));
   }
   /* Neon 图表霓虹辉光 — recharts SVG 不能用 Tailwind,统一这里加 drop-shadow,
      柱/扇区/折线段/圆点全部带紫蓝光晕,贴近登录页风格。
