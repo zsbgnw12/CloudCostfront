@@ -43,29 +43,11 @@ export function NeonBackdrop() {
       })
     }
 
-    const mouse = { x: -1000, y: -1000, active: false }
-    const onMove = (e: MouseEvent) => { mouse.x = e.clientX; mouse.y = e.clientY; mouse.active = true }
-    const onLeave = () => { mouse.active = false; mouse.x = -1000; mouse.y = -1000 }
-    window.addEventListener("mousemove", onMove)
-    window.addEventListener("mouseleave", onLeave)
-
     const tick = () => {
       ctx.clearRect(0, 0, window.innerWidth, window.innerHeight)
-      // 粒子运动
+      // 粒子自由漂移 — 后台卡片把背景挡得差不多了,鼠标吸引意义不大,
+      // 直接拿掉省 CPU + 省事件监听。
       for (const p of PARTS) {
-        // 鼠标轻吸引
-        if (mouse.active) {
-          const dx = mouse.x - p.x
-          const dy = mouse.y - p.y
-          const d2 = dx * dx + dy * dy
-          if (d2 < 22500) { // 150px
-            const f = (1 - d2 / 22500) * 0.04
-            p.vx += dx * f / Math.sqrt(d2 + 1)
-            p.vy += dy * f / Math.sqrt(d2 + 1)
-          }
-        }
-        p.vx *= 0.985
-        p.vy *= 0.985
         p.x += p.vx
         p.y += p.vy
         // 边界回卷
@@ -109,8 +91,6 @@ export function NeonBackdrop() {
     return () => {
       cancelAnimationFrame(raf)
       window.removeEventListener("resize", resize)
-      window.removeEventListener("mousemove", onMove)
-      window.removeEventListener("mouseleave", onLeave)
     }
   }, [resolvedTheme])
 
