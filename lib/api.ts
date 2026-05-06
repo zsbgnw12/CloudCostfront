@@ -12,12 +12,17 @@ function getApiBase(): string {
 
 const API_BASE = getApiBase()
 
-function redirectToLogin() {
+function redirectToLogin(force = false) {
   if (typeof window === "undefined") return
   if (window.location.pathname.startsWith("/api/auth")) return
   // Cross-origin in prod (static web app → container app). Use absolute URL so
   // the browser leaves the SPA origin and the cookie lands on the backend host.
-  window.location.href = `${API_BASE}/api/auth/login?redirect=true`
+  // force=true 时后端会带 prompt=select_account,强制 Casdoor 让用户重新选账号,
+  // 避免"无云管角色 → 跳登录 → cookie 复用 → 同账号回来 → 又 403"的死循环。
+  const url = force
+    ? `${API_BASE}/api/auth/login?redirect=true&force=true`
+    : `${API_BASE}/api/auth/login?redirect=true`
+  window.location.href = url
 }
 
 /**
@@ -98,6 +103,27 @@ async function requestRaw(path: string, init?: RequestInit): Promise<Response> {
   }
   if (!res.ok) {
     const body = await res.text().catch(() => "")
+    // 特殊 403:"cloud role required" 表示当前账号在 Casdoor 没分配任何 cloud_*
+    // 角色 — 一直 403 用户卡住没出口。弹对话框让用户主动选"重新登录"(force=true
+    // 让 Casdoor 重选账号),取消则保持现状由 UI 自行展示。
+    if (res.status === 403 && /cloud role required/i.test(body) && typeof window !== "undefined") {
+      // 跨多个并发请求只弹一次:用 sessionStorage 节流
+      const KEY = "_no_cloud_role_alerted"
+      if (!sessionStorage.getItem(KEY)) {
+        sessionStorage.setItem(KEY, "1")
+        const ok = window.confirm(
+          "你的账号没有 CloudCost 访问权限。\n\n" +
+          "可能原因:Casdoor 后台未给当前账号分配 cloud_admin / cloud_ops / cloud_<provider>(aws/gcp/azure/taiji) 角色。\n\n" +
+          "点击「确定」用其他账号重新登录,或联系管理员。"
+        )
+        if (ok) {
+          redirectToLogin(true)  // force=true 强制重选账号
+          throw new Error("redirecting to re-login (no cloud role)")
+        }
+        // 取消则解除节流,下次还能弹
+        setTimeout(() => sessionStorage.removeItem(KEY), 5000)
+      }
+    }
     throw new Error(`API ${res.status}: ${body}`)
   }
   return res
