@@ -177,7 +177,10 @@ export default function DailyReportPage() {
       try {
         const data = await accountsApi.costs(costTargetAccountId, dateRange.start, dateRange.end)
         if (!cancelled) setCostSummary(data)
-      } catch {
+      } catch (e) {
+        // 接口失败时静默 setCostSummary(null) 会让 UI 一直停在"暂无数据",
+        // 用户分不清"真没数据"还是"后端挂了" — 至少打到 console
+        console.error("[daily-report] costs fetch failed", e)
         if (!cancelled) setCostSummary(null)
       } finally {
         if (!cancelled) setCostLoading(false)
