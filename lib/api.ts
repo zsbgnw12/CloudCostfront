@@ -14,15 +14,11 @@ const API_BASE = getApiBase()
 
 function redirectToLogin(force = false) {
   if (typeof window === "undefined") return
-  if (window.location.pathname.startsWith("/api/auth")) return
-  // Cross-origin in prod (static web app → container app). Use absolute URL so
-  // the browser leaves the SPA origin and the cookie lands on the backend host.
-  // force=true 时后端会带 prompt=select_account,强制 Casdoor 让用户重新选账号,
-  // 避免"无云管角色 → 跳登录 → cookie 复用 → 同账号回来 → 又 403"的死循环。
-  const url = force
-    ? `${API_BASE}/api/auth/login?redirect=true&force=true`
-    : `${API_BASE}/api/auth/login?redirect=true`
-  window.location.href = url
+  // 已经在登录页就不跳(避免反复刷新)
+  if (window.location.pathname === "/login") return
+  // 跳前端炫酷登录页;force 透传(到 /login 后用户主动点按钮才会去 Casdoor)
+  // /login 内部按 force 决定调 ?force=true 还是普通 /api/auth/login
+  window.location.href = force ? "/login?force=true" : "/login"
 }
 
 /**
