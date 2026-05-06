@@ -228,7 +228,7 @@ export default function AlertsPage() {
               <DialogDescription>
                 {editingId === null
                   ? "当服务账号费用超出阈值或未达承诺用量时触发告警"
-                  : "修改后保存,改动立即生效。多项目类型可在"账号选择"勾选/取消项目以扩缩范围。"}
+                  : "修改后保存,改动立即生效。多项目类型可在「账号选择」勾选/取消项目以扩缩范围。"}
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-4">
