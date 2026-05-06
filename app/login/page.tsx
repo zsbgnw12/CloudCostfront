@@ -314,8 +314,6 @@ export default function LoginPage() {
           stroke="url(#flowGrad1)" strokeWidth="1.2" fill="none" className="login-flow-path-3" />
       </svg>
 
-      <div className="absolute inset-0 pointer-events-none login-scan-line" />
-
       <div className="absolute inset-0 pointer-events-none opacity-[0.05] mix-blend-overlay"
         style={{
           backgroundImage:
