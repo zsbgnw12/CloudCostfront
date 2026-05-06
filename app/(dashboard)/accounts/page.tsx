@@ -20,11 +20,12 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
-  accountsApi, azureConsentApi,
+  accountsApi, azureConsentApi, authApi,
   type ServiceAccount, type ServiceAccountDetail, type HistoryItem, type SupplySourceItem,
   type AzureConsentInvite, type AzureConsentStartResponse, type AzureDiscoveredSubscription,
 } from "@/lib/api"
 import { useAccounts, useSupplySourcesAll } from "@/hooks/use-data"
+import useSWR from "swr"
 import { cn } from "@/lib/utils"
 
 /* ─── Status helpers ─────────────────────────────────────── */
@@ -886,15 +887,29 @@ export default function AccountsPage() {
     return Array.from(m.entries()).sort((a, b) => (a[1] || "").localeCompare(b[1] || "", "zh-CN"))
   }, [sources])
 
+  // 当前用户的 visible_providers — null 表示全量(admin/ops)
+  const { data: me } = useSWR("auth:me", () => authApi.me(), { revalidateOnFocus: false })
+  const visibleProviders = me?.visible_providers  // null = 全量;["aws"] = 仅 AWS
+
+  /** 按当前用户的 provider 范围过滤货源选项(添加/编辑云账号时,只能选自己能管的云)。 */
+  const filterByProviderScope = (arr: SupplySourceItem[]) => {
+    if (!visibleProviders) return arr  // null = 全量
+    return arr.filter((s) => visibleProviders.includes(s.provider))
+  }
+
   const formSourcesForSupplier = useMemo(() => {
-    const arr = sources.filter((s) => String(s.supplier_id) === form.supplier_id)
+    const arr = filterByProviderScope(
+      sources.filter((s) => String(s.supplier_id) === form.supplier_id)
+    )
     return [...arr].sort((a, b) => a.provider.localeCompare(b.provider))
-  }, [sources, form.supplier_id])
+  }, [sources, form.supplier_id, visibleProviders])
 
   const editSourcesForSupplier = useMemo(() => {
-    const arr = sources.filter((s) => String(s.supplier_id) === editForm.supplier_id)
+    const arr = filterByProviderScope(
+      sources.filter((s) => String(s.supplier_id) === editForm.supplier_id)
+    )
     return [...arr].sort((a, b) => a.provider.localeCompare(b.provider))
-  }, [sources, editForm.supplier_id])
+  }, [sources, editForm.supplier_id, visibleProviders])
 
   const load = useCallback(async () => {
     await Promise.all([mutateAccounts(), mutateSources()])

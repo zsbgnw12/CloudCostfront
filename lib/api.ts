@@ -332,6 +332,8 @@ export interface CurrentUser {
   avatar_url: string | null
   roles: string[]
   visible_cloud_account_ids: number[] | null
+  /** null = 全量(admin/ops);[] = 无范围;["aws","gcp"] = 限定到这些 provider */
+  visible_providers: string[] | null
 }
 
 export const authApi = {
