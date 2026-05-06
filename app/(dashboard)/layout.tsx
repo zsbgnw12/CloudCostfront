@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation"
 import { Sidebar } from "@/components/layout/sidebar"
 import { Header } from "@/components/layout/header"
 import { PageTransition } from "@/components/page-transition"
+import { NeonBackdrop } from "@/components/neon-backdrop"
 import { authApi } from "@/lib/api"
 import { Cloud } from "lucide-react"
 
@@ -50,14 +51,17 @@ export default function DashboardLayout({
   }
 
   return (
-    <div className="flex h-screen overflow-hidden">
-      <Sidebar />
-      <div className="flex flex-col flex-1 overflow-hidden relative">
-        <Header />
-        <main className="flex-1 overflow-y-auto p-4 md:p-8 z-10 scroll-smooth">
-          <PageTransition>{children}</PageTransition>
-        </main>
+    <>
+      <NeonBackdrop />
+      <div className="flex h-screen overflow-hidden relative z-10">
+        <Sidebar />
+        <div className="flex flex-col flex-1 overflow-hidden relative">
+          <Header />
+          <main className="flex-1 overflow-y-auto p-4 md:p-8 z-10 scroll-smooth">
+            <PageTransition>{children}</PageTransition>
+          </main>
+        </div>
       </div>
-    </div>
+    </>
   )
 }

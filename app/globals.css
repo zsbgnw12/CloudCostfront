@@ -441,6 +441,113 @@
     text-shadow: 0 0 12px oklch(0.7 0.25 260 / 0.6);
   }
 
+  /* ───── 入场动画:卡片淡入上滑,主 main 内的卡片错峰 ───── */
+  @keyframes neon-card-enter {
+    0% { opacity: 0; transform: translateY(16px) scale(0.985); filter: blur(4px); }
+    100% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+  }
+  .neon main [data-slot="card"] {
+    animation: neon-card-enter 0.7s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+  }
+  .neon main [data-slot="card"]:nth-of-type(1) { animation-delay: 0.05s; }
+  .neon main [data-slot="card"]:nth-of-type(2) { animation-delay: 0.12s; }
+  .neon main [data-slot="card"]:nth-of-type(3) { animation-delay: 0.19s; }
+  .neon main [data-slot="card"]:nth-of-type(4) { animation-delay: 0.26s; }
+  .neon main [data-slot="card"]:nth-of-type(5) { animation-delay: 0.33s; }
+  .neon main [data-slot="card"]:nth-of-type(6) { animation-delay: 0.40s; }
+  .neon main [data-slot="card"]:nth-of-type(n+7) { animation-delay: 0.45s; }
+
+  /* ───── Sidebar 菜单项:hover 霓虹辉光 + 图标放大,active 左侧光带脉动 ───── */
+  .neon [data-sidebar="menu-button"] {
+    position: relative;
+    transition: color 0.25s ease, background 0.3s ease, box-shadow 0.3s ease, transform 0.25s ease;
+  }
+  .neon [data-sidebar="menu-button"]:hover {
+    color: oklch(0.95 0.10 240);
+    background: linear-gradient(90deg,
+      oklch(0.5 0.22 270 / 0.18) 0%,
+      oklch(0.5 0.22 290 / 0.10) 80%,
+      transparent 100%);
+    text-shadow: 0 0 14px oklch(0.7 0.25 270 / 0.5);
+  }
+  .neon [data-sidebar="menu-button"] svg {
+    transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), filter 0.3s ease;
+  }
+  .neon [data-sidebar="menu-button"]:hover svg {
+    transform: scale(1.18);
+    filter: drop-shadow(0 0 8px oklch(0.7 0.28 270 / 0.7));
+  }
+  .neon [data-sidebar="menu-button"][data-active="true"]::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 14%;
+    bottom: 14%;
+    width: 3px;
+    border-radius: 2px;
+    background: linear-gradient(180deg,
+      oklch(0.75 0.25 240),
+      oklch(0.75 0.27 290),
+      oklch(0.75 0.25 320));
+    box-shadow: 0 0 12px oklch(0.7 0.27 280 / 0.8);
+    animation: neon-bar-pulse 2.4s ease-in-out infinite;
+  }
+  @keyframes neon-bar-pulse {
+    0%, 100% { opacity: 0.85; transform: scaleY(1); }
+    50%      { opacity: 1;    transform: scaleY(1.08); }
+  }
+
+  /* ───── Skeleton 改成霓虹流光 ───── */
+  .neon [data-slot="skeleton"] {
+    background: linear-gradient(90deg,
+      oklch(0.22 0.06 270 / 0.4) 0%,
+      oklch(0.45 0.20 270 / 0.45) 50%,
+      oklch(0.22 0.06 270 / 0.4) 100%);
+    background-size: 200% 100%;
+    animation: neon-skeleton 1.6s linear infinite;
+  }
+  @keyframes neon-skeleton {
+    0%   { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+
+  /* ───── Badge 微动效:轻微脉动光晕 ───── */
+  .neon [data-slot="badge"] {
+    position: relative;
+    transition: box-shadow 0.3s ease, transform 0.25s ease;
+  }
+  .neon [data-slot="badge"]:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 0 14px -2px oklch(0.7 0.25 270 / 0.6);
+  }
+
+  /* ───── 数字大字段:轻量发光 ───── */
+  .neon main .text-3xl.font-bold,
+  .neon main .text-2xl.font-bold {
+    text-shadow: 0 0 18px oklch(0.55 0.25 270 / 0.30);
+  }
+
+  /* ───── 表格行 hover:渐变扫光 ───── */
+  .neon tbody tr {
+    transition: background 0.25s ease;
+  }
+  .neon tbody tr:hover {
+    background: linear-gradient(90deg,
+      oklch(0.5 0.22 240 / 0.12) 0%,
+      oklch(0.5 0.22 290 / 0.08) 50%,
+      transparent 100%);
+  }
+
+  /* ───── 通用按钮 ghost/outline 在 neon 下也加 hover 霓虹边 ───── */
+  .neon button[data-slot="button"]:not([data-variant="default"]):hover {
+    box-shadow: 0 0 0 1px oklch(0.65 0.25 270 / 0.4),
+                0 0 16px -4px oklch(0.6 0.25 270 / 0.5);
+  }
+
+  /* ───── 标题字符可选发光(给 Dashboard h1 加双层效果) ───── */
+  .neon h1.text-3xl::after,
+  .neon h1.text-4xl::after { content: ""; }
+
   /* 滚动条改成霓虹 */
   .neon ::-webkit-scrollbar {
     width: 10px;

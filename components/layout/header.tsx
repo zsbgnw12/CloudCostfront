@@ -438,7 +438,8 @@ function UserMenu() {
   const { data: me } = useSWR("auth:me", () => authApi.me(), { revalidateOnFocus: false })
   const handleLogout = async () => {
     try { await authApi.logout() } catch {}
-    window.location.href = authApi.loginUrl()
+    // 走前端炫酷登录页,而不是直接撞 Casdoor —— 用户能先看到登录界面再点
+    window.location.href = "/login"
   }
   const initial = (me?.display_name || me?.username || "?").charAt(0).toUpperCase()
   return (
