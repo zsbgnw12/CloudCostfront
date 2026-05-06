@@ -487,6 +487,10 @@ export const alertsApi = {
   unreadCount: () => request<{ count: number }>("/api/alerts/notifications/unread-count"),
   markRead: (id: number) => request<void>(`/api/alerts/notifications/${id}/read`, { method: "POST" }),
   markAllRead: () => request<void>("/api/alerts/notifications/read-all", { method: "POST" }),
+  deleteNotification: (id: number) =>
+    request<void>(`/api/alerts/notifications/${id}`, { method: "DELETE" }),
+  deleteAllNotifications: (onlyRead = false) =>
+    request<void>(`/api/alerts/notifications${onlyRead ? "?only_read=true" : ""}`, { method: "DELETE" }),
   commitmentStatus: (month?: string) => {
     const qs = month ? `?month=${month}` : ""
     return request<CommitmentStatus[]>(`/api/alerts/commitment-status${qs}`)

@@ -98,6 +98,25 @@ export function Header() {
     } catch (e) { console.error(e) }
   }
 
+  const handleDeleteOne = async (id: number, wasUnread: boolean) => {
+    try {
+      await alertsApi.deleteNotification(id)
+      mutateNotifs((prev) => prev?.filter((n) => n.id !== id), false)
+      if (wasUnread) {
+        mutateCount((prev) => prev ? { count: Math.max(0, prev.count - 1) } : prev, false)
+      }
+    } catch (e) { alert(`删除失败: ${e instanceof Error ? e.message : e}`) }
+  }
+
+  const handleClearAll = async () => {
+    if (!confirm("确定清空所有通知?(已读 + 未读全部删除)")) return
+    try {
+      await alertsApi.deleteAllNotifications(false)
+      mutateNotifs(() => [], false)
+      mutateCount({ count: 0 }, false)
+    } catch (e) { alert(`清空失败: ${e instanceof Error ? e.message : e}`) }
+  }
+
   const runSync = async (startMonth: string, endMonth: string, provider?: string) => {
     try {
       setSyncStatus({ status: "syncing" })
@@ -337,11 +356,22 @@ export function Header() {
           <DropdownMenuContent align="end" className="w-80">
             <DropdownMenuLabel className="flex items-center justify-between">
               <span>通知中心</span>
-              {unreadCount > 0 && (
-                <Button variant="ghost" size="sm" className="text-xs text-primary h-auto p-0" onClick={handleMarkAllRead}>
-                  全部已读
-                </Button>
-              )}
+              <div className="flex items-center gap-3">
+                {unreadCount > 0 && (
+                  <Button variant="ghost" size="sm" className="text-xs text-primary h-auto p-0" onClick={handleMarkAllRead}>
+                    全部已读
+                  </Button>
+                )}
+                {notifications.length > 0 && (
+                  <Button
+                    variant="ghost" size="sm"
+                    className="text-xs text-destructive hover:text-destructive h-auto p-0"
+                    onClick={handleClearAll}
+                  >
+                    清空
+                  </Button>
+                )}
+              </div>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
             {notifications.length === 0 ? (
@@ -352,7 +382,7 @@ export function Header() {
               notifications.map((notification) => (
                 <DropdownMenuItem
                   key={notification.id}
-                  className="flex flex-col items-start gap-1 p-3 cursor-pointer"
+                  className="flex flex-col items-start gap-1 p-3 cursor-pointer group/notif"
                   onClick={() => !notification.is_read && handleMarkRead(notification.id)}
                 >
                   <div className="flex items-center gap-2 w-full">
@@ -363,12 +393,24 @@ export function Header() {
                     ) : (
                       <Info className="w-4 h-4 text-blue-400 shrink-0" />
                     )}
-                    <span className="font-medium text-sm flex-1">
+                    <span className="font-medium text-sm flex-1 min-w-0 truncate">
                       {notification.title}
                     </span>
                     {!notification.is_read && (
-                      <div className="w-2 h-2 rounded-full bg-primary" />
+                      <div className="w-2 h-2 rounded-full bg-primary shrink-0" />
                     )}
+                    <button
+                      type="button"
+                      aria-label="删除通知"
+                      className="ml-1 p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive opacity-0 group-hover/notif:opacity-100 transition-opacity shrink-0"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        e.preventDefault()
+                        handleDeleteOne(notification.id, !notification.is_read)
+                      }}
+                    >
+                      <Ban className="w-3.5 h-3.5" />
+                    </button>
                   </div>
                   <p className="text-xs text-muted-foreground pl-6">
                     {notification.message}
