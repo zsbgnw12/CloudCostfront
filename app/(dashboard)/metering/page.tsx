@@ -30,35 +30,9 @@ import {
   useAccounts, useSuppliers, useSupplySourcesAll,
 } from "@/hooks/use-data"
 import { cn } from "@/lib/utils"
+import { useChartTheme } from "@/lib/chart-theme"
 
 const PROVIDER_LABELS: Record<string, string> = { aws: "AWS", gcp: "GCP", azure: "Azure", taiji: "Taiji" }
-
-const COLORS = [
-  "#8b5cf6", "#3b82f6", "#06b6d4", "#10b981", "#f59e0b",
-  "#ef4444", "#ec4899", "#6366f1", "#14b8a6", "#f97316",
-]
-
-/** Recharts 默认图例/Tooltip 为黑字，深色背景下需显式指定浅色 */
-const CHART_TOOLTIP_PROPS = {
-  contentStyle: {
-    backgroundColor: "rgba(20,20,20,0.94)",
-    border: "1px solid rgba(255,255,255,0.12)",
-    borderRadius: 8,
-    boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
-  },
-  labelStyle: { color: "#fafafa" },
-  itemStyle: { color: "#e4e4e7" },
-} as const
-
-const CHART_LEGEND_PROPS = {
-  wrapperStyle: { color: "rgba(255,255,255,0.88)", fontSize: 12 },
-  iconType: "circle" as const,
-}
-
-/** 坐标轴刻度文字由 tick.fill 控制，仅设 stroke 字仍是黑色 */
-const CHART_AXIS_STROKE = "rgba(255,255,255,0.2)"
-const CHART_TICK = { fill: "#d4d4d8", fontSize: 11 }
-const CHART_GRID = "rgba(255,255,255,0.08)"
 
 function legendTextLight(value: string) {
   return <span className="text-foreground">{value}</span>
@@ -84,6 +58,29 @@ function fmtCost(n: unknown): string {
 }
 
 export default function MeteringPage() {
+  const ct = useChartTheme()
+  // 与 ct 派生的图表常量,放在组件内才能跟着主题切换实时变化
+  const COLORS = ct.palette
+  const CHART_GRID = ct.grid
+  const CHART_AXIS_STROKE = ct.axis
+  const CHART_TICK = { fill: ct.axisStrong, fontSize: 11 }
+  const CHART_TOOLTIP_PROPS = {
+    contentStyle: {
+      backgroundColor: ct.tooltipBg,
+      backdropFilter: "blur(12px)",
+      border: `1px solid ${ct.tooltipBorder}`,
+      borderRadius: 8,
+      boxShadow: ct.variant === "neon"
+        ? "0 8px 32px rgba(99,102,241,0.35)"
+        : "0 8px 24px rgba(0,0,0,0.4)",
+    },
+    labelStyle: { color: ct.tooltipText },
+    itemStyle: { color: ct.tooltipText2 },
+  } as const
+  const CHART_LEGEND_PROPS = {
+    wrapperStyle: { color: ct.tooltipText, fontSize: 12 },
+    iconType: "circle" as const,
+  }
   const today = new Date()
   const { data: accounts = [] } = useAccounts()
   const { data: suppliers = [] } = useSuppliers()

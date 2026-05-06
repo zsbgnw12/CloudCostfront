@@ -18,11 +18,9 @@ import {
 import { accountsApi, billingApi, type DailyReportRow, type CostSummary } from "@/lib/api"
 import { useAccounts, useSuppliers, useSupplySourcesAll } from "@/hooks/use-data"
 import { cn } from "@/lib/utils"
+import { useChartTheme } from "@/lib/chart-theme"
 
 const PROVIDER_LABELS: Record<string, string> = { aws: "AWS", gcp: "GCP", azure: "Azure", taiji: "Taiji" }
-
-const LINE_COLORS = ["#e8854a", "#5b8def", "#4ade80", "#eab308", "#d946ef", "#14b8a6", "#ef4444", "#818cf8", "#84cc16", "#38bdf8"]
-const SVC_COLORS = ["#e8854a", "#5b8def", "#4ade80", "#eab308", "#d946ef", "#14b8a6", "#ef4444", "#818cf8", "#84cc16", "#38bdf8"]
 
 function fmtMoney(v: number, factor = 1) {
   const x = v * factor
@@ -46,6 +44,23 @@ function getDefaultRange() {
 }
 
 export default function DailyReportPage() {
+  const ct = useChartTheme()
+  // 跟主题切换实时变化的图表常量
+  const LINE_COLORS = ct.palette
+  const SVC_COLORS = ct.palette
+  const TOOLTIP_STYLE = {
+    backgroundColor: ct.tooltipBg,
+    backdropFilter: "blur(12px)",
+    border: `1px solid ${ct.tooltipBorder}`,
+    borderRadius: "8px",
+    color: ct.tooltipText,
+    boxShadow: ct.variant === "neon"
+      ? "0 8px 32px rgba(99,102,241,0.35)"
+      : "0 8px 24px rgba(0,0,0,0.4)",
+  }
+  const LEGEND_STYLE = { color: ct.tooltipText2, fontSize: 11 }
+  // 合计线在 neon/dark 用白,light 下用深灰才看得清
+  const TOTAL_LINE_STROKE = ct.variant === "light" ? "#1f2937" : "#ffffff"
   const [rows, setRows] = useState<DailyReportRow[]>([])
   const { data: accounts = [] } = useAccounts()
   const { data: suppliers = [] } = useSuppliers()
@@ -488,20 +503,20 @@ export default function DailyReportPage() {
                 ) : (
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={lineChartData.data}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#3a3a4a" vertical={false} />
-                      <XAxis dataKey="date" stroke="#a1a1aa" fontSize={11} tickLine={false} axisLine={false} />
-                      <YAxis stroke="#a1a1aa" fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v) => `$${v}`} />
+                      <CartesianGrid strokeDasharray="3 3" stroke={ct.grid} vertical={false} />
+                      <XAxis dataKey="date" stroke={ct.axis} fontSize={11} tickLine={false} axisLine={false} />
+                      <YAxis stroke={ct.axis} fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v) => `$${v}`} />
                       <Tooltip
-                        contentStyle={{ backgroundColor: "#1e1e2e", border: "1px solid #3a3a4a", borderRadius: "8px", color: "#e5e5e5" }}
+                        contentStyle={TOOLTIP_STYLE}
                         formatter={(v: number, name: string) => [fmtMoney(v, 1), name]}
                         labelFormatter={(l) => `日期: ${l}`}
                       />
-                      <Legend wrapperStyle={{ color: "#a1a1aa", fontSize: 11 }} />
+                      <Legend wrapperStyle={LEGEND_STYLE} />
                       {lineChartData.accountNames.length > 1 && (
                         <Line
                           type="monotone"
                           dataKey="合计"
-                          stroke="#ffffff"
+                          stroke={TOTAL_LINE_STROKE}
                           strokeWidth={2.5}
                           strokeDasharray="6 3"
                           dot={false}
@@ -603,15 +618,15 @@ export default function DailyReportPage() {
               ) : (
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={stackedByService.data}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#3a3a4a" vertical={false} />
-                    <XAxis dataKey="date" stroke="#a1a1aa" fontSize={11} tickLine={false} axisLine={false} />
-                    <YAxis stroke="#a1a1aa" fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v) => `$${v}`} />
+                    <CartesianGrid strokeDasharray="3 3" stroke={ct.grid} vertical={false} />
+                    <XAxis dataKey="date" stroke={ct.axis} fontSize={11} tickLine={false} axisLine={false} />
+                    <YAxis stroke={ct.axis} fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v) => `$${v}`} />
                     <Tooltip
-                      contentStyle={{ backgroundColor: "#1e1e2e", border: "1px solid #3a3a4a", borderRadius: "8px", color: "#e5e5e5" }}
+                      contentStyle={TOOLTIP_STYLE}
                       formatter={(v: number, name: string) => [fmtMoney(v, 1), name]}
                       labelFormatter={(l) => `日期: ${l}`}
                     />
-                    <Legend wrapperStyle={{ color: "#a1a1aa", fontSize: 11 }} />
+                    <Legend wrapperStyle={LEGEND_STYLE} />
                     {stackedByService.serviceNames.map((name, i) => (
                       <Bar key={name} dataKey={name} stackId="svc" fill={SVC_COLORS[i % SVC_COLORS.length]} />
                     ))}

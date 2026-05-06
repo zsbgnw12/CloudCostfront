@@ -2,7 +2,6 @@
 
 import { useState, useMemo } from "react"
 import { TrendingUp, TrendingDown, FolderKanban, KeyRound } from "lucide-react"
-import { useTheme } from "next-themes"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
@@ -14,25 +13,8 @@ import {
 } from "recharts"
 import { useAccounts, useDashboardBundle } from "@/hooks/use-data"
 import type { DashboardTrendPoint, DashboardProviderSlice } from "@/lib/api"
+import { useChartTheme } from "@/lib/chart-theme"
 
-/** Recharts SVG 不吃 Tailwind className,只能传 stroke / fill 字面色。
- *  这里按主题返回一组与 design tokens 视觉等价的颜色。 */
-function useChartTheme() {
-  const { resolvedTheme } = useTheme()
-  const dark = resolvedTheme !== "light"  // SSR / 默认走 dark
-  return {
-    axis: dark ? "rgba(255,255,255,0.55)" : "rgba(0,0,0,0.55)",
-    axisStrong: dark ? "rgba(255,255,255,0.85)" : "rgba(0,0,0,0.75)",
-    grid: dark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)",
-    tooltipBg: dark ? "rgba(20,20,20,0.92)" : "rgba(255,255,255,0.96)",
-    tooltipBorder: dark ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.12)",
-    tooltipText: dark ? "#fafafa" : "#1a1a1a",
-    tooltipText2: dark ? "#e4e4e7" : "#3f3f46",
-    cursor: dark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.05)",
-  }
-}
-
-const COLORS = ["#e8854a", "#5b8def", "#4ade80", "#eab308", "#d946ef", "#14b8a6", "#ef4444", "#818cf8", "#84cc16", "#38bdf8"]
 function fmt(v: number) { return `$${Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` }
 function getMonthOptions() {
   const opts: { value: string; label: string }[] = []
@@ -186,7 +168,7 @@ export default function DashboardPage() {
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
                       <Pie data={byProvider ?? []} cx="50%" cy="50%" innerRadius={60} outerRadius={85} paddingAngle={4} dataKey="cost" nameKey="provider" stroke="none">
-                        {(byProvider ?? []).map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                        {(byProvider ?? []).map((_, i) => <Cell key={i} fill={ct.palette[i % ct.palette.length]} />)}
                       </Pie>
                       <Tooltip
                         contentStyle={{ backgroundColor: ct.tooltipBg, backdropFilter: "blur(12px)", border: `1px solid ${ct.tooltipBorder}`, borderRadius: "12px", boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}
@@ -201,7 +183,7 @@ export default function DashboardPage() {
                   {(byProvider ?? []).map((r: DashboardProviderSlice, i: number) => (
                     <div key={r.provider} className="flex items-center justify-between text-sm group">
                       <div className="flex items-center gap-3">
-                        <div className="w-3 h-3 rounded-full shadow-inner ring-1 ring-foreground/10" style={{ backgroundColor: COLORS[i % COLORS.length] }} />
+                        <div className="w-3 h-3 rounded-full shadow-inner ring-1 ring-foreground/10" style={{ backgroundColor: ct.palette[i % ct.palette.length] }} />
                         <span className="text-foreground/80 font-medium group-hover:text-foreground transition-colors">{r.provider}</span>
                       </div>
                       <div className="text-right flex items-center gap-3">

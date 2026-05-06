@@ -263,6 +263,37 @@
   .neon [data-active="true"] {
     color: oklch(0.85 0.18 240);
   }
+  /* Neon 图表霓虹辉光 — recharts SVG 不能用 Tailwind,统一这里加 drop-shadow,
+     柱/扇区/折线段/圆点全部带紫蓝光晕,贴近登录页风格。
+     硬编码紫色,因为 SVG drop-shadow 不能引用元素自身 fill 色,
+     给所有元素一个统一的"主氛围光"是常见做法,反而让画面更协调。 */
+  .neon .recharts-bar-rectangle,
+  .neon .recharts-rectangle.recharts-bar-rectangle {
+    filter: drop-shadow(0 0 6px rgba(139,92,246,0.5));
+  }
+  .neon .recharts-pie-sector,
+  .neon .recharts-pie path {
+    filter: drop-shadow(0 0 8px rgba(168,85,247,0.55));
+  }
+  .neon .recharts-line .recharts-curve {
+    filter: drop-shadow(0 0 4px rgba(99,102,241,0.6));
+  }
+  .neon .recharts-line-dot circle,
+  .neon .recharts-active-dot circle {
+    filter: drop-shadow(0 0 4px rgba(168,85,247,0.7));
+  }
+  .neon .recharts-area .recharts-curve {
+    filter: drop-shadow(0 0 4px rgba(99,102,241,0.5));
+  }
+  /* Neon 图例/Tooltip 文字略带霓虹冷调 */
+  .neon .recharts-legend-item-text,
+  .neon .recharts-cartesian-axis-tick text {
+    fill: rgba(186,230,253,0.85) !important;
+  }
+  /* Neon 进度条光晕 */
+  .neon [role="progressbar"] > * {
+    box-shadow: 0 0 12px oklch(0.7 0.22 270 / 0.55);
+  }
   
   /* Global smooth transitions for common interactive elements */
   a, button, input, select, textarea, [role="button"] {
