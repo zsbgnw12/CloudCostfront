@@ -1011,6 +1011,41 @@ export default function AccountsPage() {
     }
   }
 
+  // ─── 批量删除服务账号 ─────────────────────
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false)
+  const [bulkDeleting, setBulkDeleting] = useState(false)
+
+  const submitBulkDelete = async () => {
+    if (bulkSelectedIds.size === 0) return
+    setBulkDeleting(true)
+    const ids = Array.from(bulkSelectedIds)
+    try {
+      const results = await Promise.allSettled(ids.map((id) => accountsApi.hardDelete(id)))
+      const failed: { id: number; reason: string }[] = []
+      let ok = 0
+      results.forEach((r, i) => {
+        if (r.status === "fulfilled") ok += 1
+        else failed.push({ id: ids[i], reason: r.reason instanceof Error ? r.reason.message : String(r.reason) })
+      })
+      let msg = `已删除 ${ok} 个`
+      if (failed.length > 0) {
+        msg += `；失败 ${failed.length} 个（${failed.map((f) => `#${f.id}:${f.reason}`).join("；")}）`
+      }
+      alert(msg)
+      // 若当前详情卡片正是被删的账号，关掉
+      if (selectedId && bulkSelectedIds.has(selectedId)) {
+        setSelectedId(null); setDetail(null); setShowCreds(false); setCreds(null)
+      }
+      setBulkDeleteOpen(false)
+      setBulkSelectedIds(new Set())
+      await mutateAccounts()
+    } catch (e) {
+      alert(`批量删除失败：${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setBulkDeleting(false)
+    }
+  }
+
   const handleBackToCards = () => {
     setSelectedId(null); setDetail(null); setShowCreds(false); setCreds(null)
   }
@@ -1968,6 +2003,14 @@ export default function AccountsPage() {
                   <div className="flex items-center gap-3 bg-card border border-primary/50 rounded-lg px-3 py-2">
                     <span className="text-sm text-foreground">已选 <b className="text-primary">{bulkSelectedIds.size}</b> 个</span>
                     <Button size="sm" onClick={openBulkDialog}>批量分配到…</Button>
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      onClick={() => setBulkDeleteOpen(true)}
+                    >
+                      <Trash2 className="w-4 h-4 mr-1" />
+                      批量删除
+                    </Button>
                     {bulkSelectedIds.size < groupAccounts.length && (
                       <Button
                         size="sm"
@@ -2149,6 +2192,50 @@ export default function AccountsPage() {
               disabled={!bulkSingleProvider || !bulkTargetSSId || bulkSubmitting}
             >
               {bulkSubmitting ? "分配中…" : "确认分配"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ─── 批量删除服务账号 ─── */}
+      <Dialog open={bulkDeleteOpen} onOpenChange={(o) => { if (!bulkDeleting) setBulkDeleteOpen(o) }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <AlertTriangle className="w-5 h-5" />
+              批量删除服务账号
+            </DialogTitle>
+            <DialogDescription>
+              将彻底删除 <b className="text-destructive">{bulkSelectedIds.size}</b> 个服务账号，
+              此操作 <b>不可恢复</b>，并会从数据库中移除相关凭证与历史记录。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-2">
+            <ScrollArea className="max-h-48 rounded border border-border bg-muted/30 p-2">
+              <ul className="text-xs space-y-1 font-mono">
+                {Array.from(bulkSelectedIds).map((id) => {
+                  const a = accounts.find((x) => x.id === id)
+                  return (
+                    <li key={id} className="truncate">
+                      #{id} · {a?.name ?? "—"}{a?.external_project_id ? ` (${a.external_project_id})` : ""}
+                    </li>
+                  )
+                })}
+              </ul>
+            </ScrollArea>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBulkDeleteOpen(false)} disabled={bulkDeleting}>取消</Button>
+            <Button
+              variant="destructive"
+              onClick={submitBulkDelete}
+              disabled={bulkDeleting || bulkSelectedIds.size === 0}
+            >
+              {bulkDeleting ? (
+                <><Loader2 className="w-4 h-4 mr-1 animate-spin" />删除中…</>
+              ) : (
+                <><Trash2 className="w-4 h-4 mr-1" />确认删除 {bulkSelectedIds.size} 个</>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
