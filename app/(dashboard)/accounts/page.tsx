@@ -1138,7 +1138,26 @@ export default function AccountsPage() {
     catch (e) { console.error(e) }
   }, [])
 
-  const tree = useMemo(() => buildTree(accounts, sources, entities), [accounts, sources, entities])
+  // 按 visible_providers 过滤树数据：cloud_<provider> 用户只看本云的货源/主体；
+  // admin/ops (visibleProviders === null) 看全量。后端已对 /supply-sources/all 等
+  // 做同样过滤，这里是 UI 防御层 + 减少老缓存/管理员模拟视图的混乱。
+  const visibleSources = useMemo(() => {
+    if (!visibleProviders) return sources
+    return sources.filter((s) => visibleProviders.includes(s.provider))
+  }, [sources, visibleProviders])
+  const visibleEntities = useMemo(() => {
+    if (!visibleProviders) return entities
+    const provOf = new Map(sources.map((s) => [s.id, s.provider]))
+    return entities.filter((e) => {
+      const p = e.provider ?? provOf.get(e.supply_source_id)
+      return p ? visibleProviders.includes(p) : false
+    })
+  }, [entities, sources, visibleProviders])
+
+  const tree = useMemo(
+    () => buildTree(accounts, visibleSources, visibleEntities),
+    [accounts, visibleSources, visibleEntities],
+  )
 
   // 选中节点的过滤：货源必匹配；如果带 entityId 则进一步过滤主体（null=未分配）
   const groupAccounts = useMemo(() => {
