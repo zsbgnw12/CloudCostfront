@@ -2122,7 +2122,7 @@ export default function AccountsPage() {
               onKeyDown={(e) => { if (e.key === "Escape") setSearchQuery("") }}
               placeholder={
                 selectedGroup
-                  ? `在「${selectedGroup.supplierName} / ${PROVIDER_LABELS[selectedGroup.provider] ?? selectedGroup.provider.toUpperCase()}${selectedGroup.entityId !== undefined ? ` / ${selectedGroup.entityName ?? UNASSIGNED_ENTITY_LABEL}` : ""}」内搜索服务账号..."
+                  ? `在「${selectedGroup.supplierName} / ${PROVIDER_LABELS[selectedGroup.provider] ?? selectedGroup.provider.toUpperCase()}${selectedGroup.entityId !== undefined ? ` / ${selectedGroup.entityName ?? UNASSIGNED_ENTITY_LABEL}` : ""}」内搜索服务账号...`
                   : "全局搜索：账号名 / 项目 ID / 供应商 / 主体 / 客户编号..."
               }
               className="pl-9 pr-9 h-9"
