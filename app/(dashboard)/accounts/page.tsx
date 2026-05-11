@@ -6,6 +6,7 @@ import {
   KeyRound, Pause, Play, Trash2, Eye, EyeOff, Pencil,
   Loader2, ArrowLeft, Building2,
   Link2, Copy, CheckCircle2, AlertTriangle, Clock, ExternalLink,
+  Search, X,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -1005,9 +1006,6 @@ export default function AccountsPage() {
     [],
   )
 
-  // View mode: "cards" shows account cards for selected group, "detail" shows single account
-  const viewMode = selectedId && detail ? "detail" : "cards"
-
   // external_project_id：入库的账号/订阅/项目 ID；Azure 与订阅字段同步，AWS/GCP 由下方 JSON 解析或编辑预填
   const [form, setForm] = useState({
     supplier_id: "",
@@ -1213,14 +1211,57 @@ export default function AccountsPage() {
     return inSrc.filter((a) => a.entity_id === selectedGroup.entityId)
   }, [accounts, selectedGroup])
 
+  // ─── 搜索：跨字段、按 selectedGroup 自动 scope ─────────────────
+  // - 输入框始终可见。无 selectedGroup 时全局搜；有 selectedGroup 时仅在该节点内搜。
+  // - 命中字段：name / external_project_id / supplier_name / entity_name / customer_codes[]
+  // - 命中即并集，case-insensitive。
+  const [searchQuery, setSearchQuery] = useState("")
+  const searchTrimmed = searchQuery.trim()
+  const isSearching = searchTrimmed.length > 0
+  // View mode: "cards" shows account cards for selected group, "detail" shows single account.
+  // 搜索时强制走 cards：搜索结果优先于"已选某账号详情"，避免误把搜索 hit 当成详情上下文。
+  const viewMode = selectedId && detail && !isSearching ? "detail" : "cards"
+  /** 搜索时的"候选池"：有 selectedGroup → groupAccounts；否则 → 全部可见账号 */
+  const searchScopeAccounts = useMemo(
+    () => (selectedGroup ? groupAccounts : accounts),
+    [selectedGroup, groupAccounts, accounts],
+  )
+  const searchResults = useMemo(() => {
+    if (!isSearching) return searchScopeAccounts
+    const q = searchTrimmed.toLowerCase()
+    return searchScopeAccounts.filter((a) => {
+      if ((a.name || "").toLowerCase().includes(q)) return true
+      if ((a.external_project_id || "").toLowerCase().includes(q)) return true
+      if ((a.supplier_name || "").toLowerCase().includes(q)) return true
+      if ((a.entity_name || "").toLowerCase().includes(q)) return true
+      if ((a.customer_codes || []).some((c) => (c || "").toLowerCase().includes(q))) return true
+      return false
+    })
+  }, [searchScopeAccounts, isSearching, searchTrimmed])
+
+  /** 右侧实际显示的账号列表：
+   *  - 搜索中：searchResults（已 scope）
+   *  - 否则有 selectedGroup：groupAccounts
+   *  - 否则：空（左侧提示语兜底） */
+  const displayedAccounts = useMemo(() => {
+    if (isSearching) return searchResults
+    if (selectedGroup) return groupAccounts
+    return [] as ServiceAccount[]
+  }, [isSearching, searchResults, selectedGroup, groupAccounts])
+
   // ─── 服务账号分页(client-side):每页 N 张卡片 ────────────────
   const [accountsPage, setAccountsPage] = useState(1)
   const [accountsPageSize, setAccountsPageSize] = useState(24)
-  const accountsTotalPages = Math.max(1, Math.ceil(groupAccounts.length / accountsPageSize))
+  const accountsTotalPages = Math.max(1, Math.ceil(displayedAccounts.length / accountsPageSize))
   const pagedAccounts = useMemo(() => {
     const start = (accountsPage - 1) * accountsPageSize
-    return groupAccounts.slice(start, start + accountsPageSize)
-  }, [groupAccounts, accountsPage, accountsPageSize])
+    return displayedAccounts.slice(start, start + accountsPageSize)
+  }, [displayedAccounts, accountsPage, accountsPageSize])
+
+  // 查询/scope 改变时回到第 1 页
+  useEffect(() => {
+    setAccountsPage(1)
+  }, [searchTrimmed, selectedGroup])
 
   const handleSelectGroup = (supplierName: string, supplySourceId: number, provider: string) => {
     setSelectedGroup({ supplierName, supplySourceId, provider })
@@ -2071,11 +2112,35 @@ export default function AccountsPage() {
 
       {/* ─── Right Panel ─── */}
       <div className="flex-1 overflow-y-auto">
-        {!selectedGroup ? (
-          <div className="flex items-center justify-center h-full text-muted-foreground">
-            <div className="text-center"><FolderOpen className="w-12 h-12 mx-auto mb-4 opacity-30" /><p>选择左侧供应商查看货源</p></div>
+        {/* ─── 顶部搜索栏：始终可见。selectedGroup 决定 scope（无则全局） ─── */}
+        <div className="sticky top-0 z-20 bg-background/95 backdrop-blur px-6 pt-4 pb-3 border-b border-border">
+          <div className="relative max-w-2xl">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+            <Input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Escape") setSearchQuery("") }}
+              placeholder={
+                selectedGroup
+                  ? `在「${selectedGroup.supplierName} / ${PROVIDER_LABELS[selectedGroup.provider] ?? selectedGroup.provider.toUpperCase()}${selectedGroup.entityId !== undefined ? ` / ${selectedGroup.entityName ?? UNASSIGNED_ENTITY_LABEL}` : ""}」内搜索服务账号..."
+                  : "全局搜索：账号名 / 项目 ID / 供应商 / 主体 / 客户编号..."
+              }
+              className="pl-9 pr-9 h-9"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent"
+                title="清空搜索 (Esc)"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
-        ) : viewMode === "detail" && detail ? (
+        </div>
+
+        {(viewMode === "detail" && detail) ? (
           /* ─── Detail View ─── */
           <div className="p-6 space-y-6">
             <div className="flex items-center gap-3">
@@ -2435,34 +2500,54 @@ export default function AccountsPage() {
             <div className="flex items-center justify-between mb-6">
               <div>
                 <div className="flex items-start gap-2">
-                  <img src={`/${selectedGroup.provider}.svg`} alt={selectedGroup.provider} className="w-6 h-6 shrink-0 mt-0.5" />
-                  <div>
-                    <h2 className="text-lg font-semibold text-foreground leading-tight">{selectedGroup.supplierName}</h2>
-                    <p className="text-sm text-muted-foreground mt-0.5">
-                      {PROVIDER_LABELS[selectedGroup.provider] ?? selectedGroup.provider.toUpperCase()}
-                      {selectedGroup.entityId !== undefined && (
-                        <>
-                          <span className="mx-1.5 text-muted-foreground/60">/</span>
-                          <span className={selectedGroup.entityId === null ? "italic" : ""}>
-                            {selectedGroup.entityName ?? UNASSIGNED_ENTITY_LABEL}
-                          </span>
-                        </>
-                      )}
-                    </p>
-                  </div>
+                  {selectedGroup ? (
+                    <>
+                      <img src={`/${selectedGroup.provider}.svg`} alt={selectedGroup.provider} className="w-6 h-6 shrink-0 mt-0.5" />
+                      <div>
+                        <h2 className="text-lg font-semibold text-foreground leading-tight">{selectedGroup.supplierName}</h2>
+                        <p className="text-sm text-muted-foreground mt-0.5">
+                          {PROVIDER_LABELS[selectedGroup.provider] ?? selectedGroup.provider.toUpperCase()}
+                          {selectedGroup.entityId !== undefined && (
+                            <>
+                              <span className="mx-1.5 text-muted-foreground/60">/</span>
+                              <span className={selectedGroup.entityId === null ? "italic" : ""}>
+                                {selectedGroup.entityName ?? UNASSIGNED_ENTITY_LABEL}
+                              </span>
+                            </>
+                          )}
+                        </p>
+                      </div>
+                    </>
+                  ) : (
+                    // 无 selectedGroup：搜索模式（isSearching=true）或初始空闲状态
+                    <div className="flex items-center gap-2">
+                      <Search className="w-5 h-5 text-muted-foreground" />
+                      <div>
+                        <h2 className="text-lg font-semibold text-foreground leading-tight">
+                          {isSearching ? "全局搜索" : "请选择左侧节点"}
+                        </h2>
+                        <p className="text-sm text-muted-foreground mt-0.5">
+                          {isSearching ? "跨货源 / 主体匹配" : "或在上方搜索框中输入"}
+                        </p>
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <p className="text-sm text-muted-foreground mt-2">{groupAccounts.length} 个服务账号</p>
+                {(selectedGroup || isSearching) && (
+                  <p className="text-sm text-muted-foreground mt-2">{displayedAccounts.length} 个服务账号{isSearching && ` · 匹配「${searchTrimmed}」`}</p>
+                )}
               </div>
-              {/* 批量分配工具栏：永久可见，无选中时是"提示 + 全选"，有选中时切换成"已选 N + 操作" */}
-              {groupAccounts.length > 0 && (
+              {/* 批量分配工具栏：永久可见，无选中时是"提示 + 全选"，有选中时切换成"已选 N + 操作"。
+                  搜索模式 + 跨货源结果时禁用批量分配/分配主体（仅批量删除允许；后端会按 scope 校验每条）。 */}
+              {displayedAccounts.length > 0 && (
                 bulkSelectedIds.size === 0 ? (
                   <div className="flex items-center gap-2 text-xs text-muted-foreground bg-card/60 border border-dashed border-border rounded-lg px-3 py-2">
-                    <span>💡 勾选左上角方框可批量分配</span>
+                    <span>💡 勾选左上角方框可批量操作</span>
                     <Button
                       size="sm"
                       variant="ghost"
                       className="h-7 text-xs"
-                      onClick={() => setBulkSelectedIds(new Set(groupAccounts.map((a) => a.id)))}
+                      onClick={() => setBulkSelectedIds(new Set(displayedAccounts.map((a) => a.id)))}
                     >
                       全选本页
                     </Button>
@@ -2483,11 +2568,11 @@ export default function AccountsPage() {
                       <Trash2 className="w-4 h-4 mr-1" />
                       批量删除
                     </Button>
-                    {bulkSelectedIds.size < groupAccounts.length && (
+                    {bulkSelectedIds.size < displayedAccounts.length && (
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={() => setBulkSelectedIds(new Set(groupAccounts.map((a) => a.id)))}
+                        onClick={() => setBulkSelectedIds(new Set(displayedAccounts.map((a) => a.id)))}
                       >
                         全选本页
                       </Button>
@@ -2497,8 +2582,19 @@ export default function AccountsPage() {
                 )
               )}
             </div>
-            {groupAccounts.length === 0 ? (
-              <div className="flex items-center justify-center py-20 text-muted-foreground"><div className="text-center"><KeyRound className="w-12 h-12 mx-auto mb-4 opacity-30" /><p>该云货源下暂无服务账号</p></div></div>
+            {displayedAccounts.length === 0 ? (
+              <div className="flex items-center justify-center py-20 text-muted-foreground">
+                <div className="text-center">
+                  {isSearching ? <Search className="w-12 h-12 mx-auto mb-4 opacity-30" /> : <FolderOpen className="w-12 h-12 mx-auto mb-4 opacity-30" />}
+                  <p>
+                    {isSearching
+                      ? `没有匹配「${searchTrimmed}」的服务账号`
+                      : selectedGroup
+                        ? "该云货源下暂无服务账号"
+                        : "请在左侧选择货源 / 主体，或在上方输入搜索词"}
+                  </p>
+                </div>
+              </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                 {pagedAccounts.map((a) => (
@@ -2508,7 +2604,11 @@ export default function AccountsPage() {
                       "bg-card border-border hover:border-primary/50 transition-colors cursor-pointer group",
                       bulkSelectedIds.has(a.id) && "ring-2 ring-primary"
                     )}
-                    onClick={() => loadDetail(a.id)}
+                    onClick={() => {
+                      // 搜索模式点击搜索结果：清空搜索词，否则 viewMode 还停在 cards 看不到详情
+                      if (isSearching) setSearchQuery("")
+                      loadDetail(a.id)
+                    }}
                   >
                     <CardContent className="p-4">
                       <div className="flex items-start justify-between">
@@ -2529,6 +2629,13 @@ export default function AccountsPage() {
                           <div className="min-w-0">
                             <p className="text-sm font-medium text-foreground truncate">{a.name}</p>
                             <p className="text-xs text-muted-foreground truncate">{a.external_project_id}</p>
+                            <p className="text-[11px] text-muted-foreground/70 truncate">
+                              {a.supplier_name}
+                              <span className="mx-1 opacity-60">·</span>
+                              <span className={a.entity_name ? "" : "italic"}>
+                                {a.entity_name ?? UNASSIGNED_ENTITY_LABEL}
+                              </span>
+                            </p>
                           </div>
                         </div>
                         <Badge variant="secondary" className={cn("text-[10px] shrink-0 ml-2", STATUS_MAP[a.status]?.class ?? "")}>{STATUS_MAP[a.status]?.label ?? a.status}</Badge>
@@ -2556,12 +2663,12 @@ export default function AccountsPage() {
             )}
 
             {/* ─── 分页控件 ─── */}
-            {groupAccounts.length > accountsPageSize && (
+            {displayedAccounts.length > accountsPageSize && (
               <div className="flex items-center justify-between gap-3 mt-4 px-1">
                 <div className="text-xs text-muted-foreground">
-                  共 <span className="font-medium text-foreground">{groupAccounts.length}</span> 个 ·
+                  共 <span className="font-medium text-foreground">{displayedAccounts.length}</span> 个 ·
                   当前 <span className="font-medium text-foreground">
-                    {(accountsPage - 1) * accountsPageSize + 1}-{Math.min(accountsPage * accountsPageSize, groupAccounts.length)}
+                    {(accountsPage - 1) * accountsPageSize + 1}-{Math.min(accountsPage * accountsPageSize, displayedAccounts.length)}
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
