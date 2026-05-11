@@ -169,6 +169,10 @@ export interface ServiceAccount {
   supply_source_id: number
   supplier_name: string
   provider: string
+  /** 主体 id（供应商→货源→主体→服务账号 这一层）；null 表示未分配主体。 */
+  entity_id?: number | null
+  /** 主体名称；entity_id 为 null 时也为 null。 */
+  entity_name?: string | null
   external_project_id: string
   status: string
   order_method?: string | null
@@ -183,6 +187,18 @@ export interface SupplySourceItem {
   supplier_id: number
   supplier_name: string | null
   provider: string
+  account_count: number
+}
+
+/** 主体（供应商 → 货源 → 主体）。来自 /api/suppliers/entities/all 或 /supply-sources/{id}/entities */
+export interface EntityItem {
+  id: number
+  supply_source_id: number
+  supplier_id?: number | null
+  supplier_name?: string | null
+  provider?: string | null
+  name: string
+  note?: string | null
   account_count: number
 }
 
@@ -395,6 +411,7 @@ export const accountsApi = {
   get: (id: number) => request<ServiceAccountDetail>(`/api/service-accounts/${id}`),
   create: (data: {
     supply_source_id: number
+    entity_id?: number | null
     name: string
     external_project_id: string
     secret_data?: Record<string, unknown>
@@ -405,6 +422,10 @@ export const accountsApi = {
   update: (id: number, data: {
     name?: string
     supply_source_id?: number
+    /** 主体 id；undefined=不动，具体 id=切换。清主体走 clear_entity=true。 */
+    entity_id?: number
+    /** 显式清空主体，与 entity_id 互斥。后端切换 supply_source 时自动清空。 */
+    clear_entity?: boolean
     external_project_id?: string
     secret_data?: Record<string, unknown>
     notes?: string
@@ -483,6 +504,29 @@ export const suppliersApi = {
     const qs = supplierId != null ? `?supplier_id=${supplierId}` : ""
     return request<SupplySourceItem[]>(`/api/suppliers/supply-sources/all${qs}`)
   },
+
+  // ─── 主体（Entity）：suppliers → supply_sources → entities → projects ───
+  listEntities: (supplySourceId: number) =>
+    request<EntityItem[]>(`/api/suppliers/supply-sources/${supplySourceId}/entities`),
+  listAllEntities: (params?: { supply_source_id?: number; supplier_id?: number }) => {
+    const qs = new URLSearchParams()
+    if (params?.supply_source_id != null) qs.set("supply_source_id", String(params.supply_source_id))
+    if (params?.supplier_id != null) qs.set("supplier_id", String(params.supplier_id))
+    const s = qs.toString()
+    return request<EntityItem[]>(`/api/suppliers/entities/all${s ? `?${s}` : ""}`)
+  },
+  createEntity: (supplySourceId: number, data: { name: string; note?: string | null }) =>
+    request<EntityItem>(`/api/suppliers/supply-sources/${supplySourceId}/entities`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateEntity: (entityId: number, data: { name?: string; note?: string | null }) =>
+    request<EntityItem>(`/api/suppliers/entities/${entityId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  deleteEntity: (entityId: number) =>
+    request<void>(`/api/suppliers/entities/${entityId}`, { method: "DELETE" }),
 }
 
 // ─── Alerts API ───────────────────────────────────────────────

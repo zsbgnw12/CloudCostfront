@@ -20,11 +20,11 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
-  accountsApi, azureConsentApi, authApi,
-  type ServiceAccount, type ServiceAccountDetail, type HistoryItem, type SupplySourceItem,
+  accountsApi, azureConsentApi, authApi, suppliersApi,
+  type ServiceAccount, type ServiceAccountDetail, type HistoryItem, type SupplySourceItem, type EntityItem,
   type AzureConsentInvite, type AzureConsentStartResponse, type AzureDiscoveredSubscription,
 } from "@/lib/api"
-import { useAccounts, useSupplySourcesAll } from "@/hooks/use-data"
+import { useAccounts, useSupplySourcesAll, useEntitiesAll } from "@/hooks/use-data"
 import useSWR from "swr"
 import { cn } from "@/lib/utils"
 
@@ -58,6 +58,9 @@ const ORDER_METHOD_OPTIONS = [
 
 const ORDER_METHOD_SELECT_SENTINEL = "__none__"
 
+/** 主体下拉框中代表「未分配主体」的哨兵值（Select 不能用空字符串作 value）。 */
+const ENTITY_SELECT_UNASSIGNED = "__unassigned__"
+
 /** 弹窗内输入/选择：与浅色区块底区分，避免与背景糊成一片 */
 const CTRL_SURFACE = "bg-background border border-input shadow-sm dark:bg-background/95"
 
@@ -90,6 +93,12 @@ const AWS_CRED_JSON_PLACEHOLDER = `{
   "aws_secret_access_key": ""
 }`
 
+const TAIJI_CRED_JSON_PLACEHOLDER = `{
+  "api_base": "https://api.taijiaicloud.com",
+  "access_token": "sk-...",
+  "admin_user_id": "1"
+}`
+
 /** 解析 AWS 配置 JSON（字段或整段 JSON），得到入库所需 external_id 与 secret_data */
 function parseAwsCredentialJson(raw: string): { external_id: string; secret_data: Record<string, string> } {
   if (!raw.trim()) throw new Error("请填写 AWS 配置")
@@ -110,6 +119,27 @@ function parseAwsCredentialJson(raw: string): { external_id: string; secret_data
       aws_access_key_id: ak,
       aws_secret_access_key: sk,
     },
+  }
+}
+
+/** Taiji：JSON 一键粘贴，含 api_base/access_token/admin_user_id；external_id 取 admin_user_id */
+function parseTaijiCredentialJson(raw: string): { external_id: string; secret_data: { api_base: string; access_token: string; admin_user_id: string } } {
+  if (!raw.trim()) throw new Error("请填写 Taiji 配置")
+  let o: Record<string, unknown>
+  try {
+    o = JSON.parse(raw) as Record<string, unknown>
+  } catch {
+    throw new Error("Taiji 配置不是合法 JSON")
+  }
+  const api_base = String(o.api_base ?? "").trim().replace(/\/+$/, "")
+  const access_token = String(o.access_token ?? "").trim()
+  const admin_user_id = String(o.admin_user_id ?? "").trim()
+  if (!api_base || !access_token || !admin_user_id) {
+    throw new Error("JSON 中需包含 api_base、access_token、admin_user_id")
+  }
+  return {
+    external_id: admin_user_id,
+    secret_data: { api_base, access_token, admin_user_id },
   }
 }
 
@@ -351,6 +381,25 @@ function CredentialSection({
             rows={8}
             className={cn("font-mono text-xs min-h-[160px]", CTRL_SURFACE)}
             placeholder='{ "type": "service_account", "project_id": "...", ... }'
+            value={secretJson}
+            onChange={(e) => onSecretJsonChange(e.target.value)}
+          />
+        </>
+      )}
+
+      {p === "taiji" && (
+        <>
+          <div className="space-y-1.5">
+            <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Taiji 接入凭证</p>
+            <p className="text-[11px] text-muted-foreground leading-snug">
+              一段 JSON 包含 <code className="text-xs">api_base</code>、<code className="text-xs">access_token</code>、<code className="text-xs">admin_user_id</code>。
+              其中 <code className="text-xs">admin_user_id</code> 用作账号唯一标识（external_project_id）。
+            </p>
+          </div>
+          <Textarea
+            rows={8}
+            className={cn("font-mono text-xs min-h-[160px]", CTRL_SURFACE)}
+            placeholder={TAIJI_CRED_JSON_PLACEHOLDER}
             value={secretJson}
             onChange={(e) => onSecretJsonChange(e.target.value)}
           />
@@ -787,51 +836,124 @@ function mergeAzureCredentialJson(
   }
 }
 
-/* ─── Tree: 供应商 → 货源(云) → 账号 ───────────────────────── */
+/* ─── Tree: 供应商 → 货源(云) → 主体 → 账号 ─────────────────── */
+/** 主体桶。entityId === null 表示「未分配主体」分组（accounts.entity_id 为空）。 */
+export interface EntityBucket {
+  entityId: number | null
+  entityName: string | null
+  note: string | null
+  accounts: ServiceAccount[]
+}
+interface SourceBucket {
+  supplySourceId: number
+  provider: string
+  entities: EntityBucket[]
+}
 interface SupplierTreeNode {
   supplierName: string
-  sources: { supplySourceId: number; provider: string; accounts: ServiceAccount[] }[]
+  sources: SourceBucket[]
 }
 
-function buildTree(accounts: ServiceAccount[], sources: SupplySourceItem[]): SupplierTreeNode[] {
+const UNASSIGNED_ENTITY_LABEL = "未分配主体"
+
+function buildTree(
+  accounts: ServiceAccount[],
+  sources: SupplySourceItem[],
+  entities: EntityItem[],
+): SupplierTreeNode[] {
   const srcById = new Map(sources.map((s) => [s.id, s]))
-  const bySup = new Map<string, Map<number, ServiceAccount[]>>()
+
+  // sup → supplySourceId → entityId(null = 未分配) → bucket
+  type EBuckets = Map<number | null, EntityBucket>
+  const bySup = new Map<string, Map<number, EBuckets>>()
+
+  const ensureSup = (name: string) => {
+    if (!bySup.has(name)) bySup.set(name, new Map())
+    return bySup.get(name)!
+  }
+  const ensureSrc = (m: Map<number, EBuckets>, ssid: number) => {
+    if (!m.has(ssid)) m.set(ssid, new Map())
+    return m.get(ssid)!
+  }
+  const ensureBucket = (
+    b: EBuckets,
+    entityId: number | null,
+    entityName: string | null,
+    note: string | null,
+  ) => {
+    const existing = b.get(entityId)
+    if (existing) return existing
+    const fresh: EntityBucket = { entityId, entityName, note, accounts: [] }
+    b.set(entityId, fresh)
+    return fresh
+  }
+
+  // 先建空货源 + 空主体桶（即使没有账号也展示出来）
   for (const s of sources) {
     const name = s.supplier_name ?? "未知"
-    if (!bySup.has(name)) bySup.set(name, new Map())
-    if (!bySup.get(name)!.has(s.id)) bySup.get(name)!.set(s.id, [])
+    ensureSrc(ensureSup(name), s.id)
   }
+  for (const e of entities) {
+    const src = srcById.get(e.supply_source_id)
+    const sname = src?.supplier_name ?? e.supplier_name ?? "未知"
+    const b = ensureSrc(ensureSup(sname), e.supply_source_id)
+    ensureBucket(b, e.id, e.name, e.note ?? null)
+  }
+
+  // 分账号到桶里。账号无 entity_id → 「未分配主体」
   for (const a of accounts) {
-    const name = srcById.get(a.supply_source_id)?.supplier_name ?? "未知"
-    if (!bySup.has(name)) bySup.set(name, new Map())
-    const m = bySup.get(name)!
-    if (!m.has(a.supply_source_id)) m.set(a.supply_source_id, [])
-    m.get(a.supply_source_id)!.push(a)
+    const src = srcById.get(a.supply_source_id)
+    const sname = src?.supplier_name ?? a.supplier_name ?? "未知"
+    const b = ensureSrc(ensureSup(sname), a.supply_source_id)
+    if (a.entity_id != null) {
+      const bucket = ensureBucket(b, a.entity_id, a.entity_name ?? null, null)
+      bucket.accounts.push(a)
+    } else {
+      const bucket = ensureBucket(b, null, null, null)
+      bucket.accounts.push(a)
+    }
   }
+
   return Array.from(bySup.entries())
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([supplierName, idMap]) => ({
       supplierName,
       sources: Array.from(idMap.entries())
-        .map(([supplySourceId, accts]) => ({
-          supplySourceId,
-          provider: srcById.get(supplySourceId)?.provider ?? "?",
-          accounts: accts,
-        }))
+        .map(([supplySourceId, bMap]) => {
+          const buckets = Array.from(bMap.values())
+          // 排序：未分配主体永远排最后；其余按名字
+          buckets.sort((x, y) => {
+            if (x.entityId === null) return 1
+            if (y.entityId === null) return -1
+            return (x.entityName ?? "").localeCompare(y.entityName ?? "", "zh-CN")
+          })
+          return {
+            supplySourceId,
+            provider: srcById.get(supplySourceId)?.provider ?? "?",
+            entities: buckets,
+          }
+        })
         .sort((x, y) => x.provider.localeCompare(y.provider)),
     }))
 }
 
+/** 当前选中节点：
+ *  - 只选到货源 → entityId === undefined（展示该货源下所有主体的账号）
+ *  - 选到具体主体（含「未分配」）→ entityId === number | null
+ */
 export type SelectedSupplySource = {
   supplySourceId: number
   supplierName: string
   provider: string
+  entityId?: number | null
+  entityName?: string | null
 }
 
 /* ─── Main Page ──────────────────────────────────────────── */
 export default function AccountsPage() {
   const { data: accounts = [], mutate: mutateAccounts, isLoading: loading } = useAccounts()
   const { data: sources = [], mutate: mutateSources } = useSupplySourcesAll()
+  const { data: entities = [], mutate: mutateEntities } = useEntitiesAll()
   const [selectedGroup, setSelectedGroup] = useState<SelectedSupplySource | null>(null)
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [detail, setDetail] = useState<ServiceAccountDetail | null>(null)
@@ -855,6 +977,8 @@ export default function AccountsPage() {
   const [form, setForm] = useState({
     supplier_id: "",
     supply_source_id: "",
+    /** "" = 未分配主体；string(id) = 选中具体主体 */
+    entity_id: "",
     name: "", external_project_id: "",
     secret_json: "", notes: "",
     order_method: "",
@@ -867,6 +991,8 @@ export default function AccountsPage() {
   const [editForm, setEditForm] = useState({
     supplier_id: "",
     supply_source_id: "",
+    /** "" = 未分配主体；string(id) = 选中具体主体 */
+    entity_id: "",
     name: "", external_project_id: "",
     secret_json: "", notes: "",
     order_method: "",
@@ -875,6 +1001,9 @@ export default function AccountsPage() {
     azure_client_secret: "",
     azure_json: "",
   })
+
+  /** 编辑时记录原始 entity_id（数字或 null），用于 patch 决策（不动 / 切换 / 清空）。 */
+  const editOriginalEntityRef = useRef<number | null>(null)
 
   /** 编辑 Azure 时拉取的凭证，用于在「应用密钥」留空时保留原值 */
   const editAzureCredsRef = useRef<Record<string, string> | null>(null)
@@ -890,6 +1019,77 @@ export default function AccountsPage() {
   // 当前用户的 visible_providers — null 表示全量(admin/ops)
   const { data: me } = useSWR("auth:me", () => authApi.me(), { revalidateOnFocus: false })
   const visibleProviders = me?.visible_providers  // null = 全量;["aws"] = 仅 AWS
+  const isAdmin = (me?.roles ?? []).includes("cloud_admin")
+
+  // ─── 主体 CRUD 对话框状态 ────────────────────────────────────
+  const [entityDialogOpen, setEntityDialogOpen] = useState(false)
+  const [entityDialogMode, setEntityDialogMode] = useState<"create" | "edit">("create")
+  const [entityDialogTarget, setEntityDialogTarget] = useState<{
+    supplySourceId: number
+    supplierName: string
+    provider: string
+    entityId?: number
+  } | null>(null)
+  const [entityForm, setEntityForm] = useState<{ name: string; note: string }>({ name: "", note: "" })
+  const [entitySubmitting, setEntitySubmitting] = useState(false)
+
+  const openCreateEntity = (supplySourceId: number, supplierName: string, provider: string) => {
+    setEntityDialogMode("create")
+    setEntityDialogTarget({ supplySourceId, supplierName, provider })
+    setEntityForm({ name: "", note: "" })
+    setEntityDialogOpen(true)
+  }
+  const openEditEntity = (e: { id: number; name: string; note: string | null; supplySourceId: number }) => {
+    setEntityDialogMode("edit")
+    const src = sources.find((s) => s.id === e.supplySourceId)
+    setEntityDialogTarget({
+      supplySourceId: e.supplySourceId,
+      supplierName: src?.supplier_name ?? "",
+      provider: src?.provider ?? "",
+      entityId: e.id,
+    })
+    setEntityForm({ name: e.name, note: e.note ?? "" })
+    setEntityDialogOpen(true)
+  }
+  const submitEntity = async () => {
+    if (!entityDialogTarget) return
+    const name = entityForm.name.trim()
+    if (!name) { alert("主体名称不能为空"); return }
+    const note = entityForm.note.trim() || null
+    setEntitySubmitting(true)
+    try {
+      if (entityDialogMode === "create") {
+        await suppliersApi.createEntity(entityDialogTarget.supplySourceId, { name, note })
+      } else if (entityDialogTarget.entityId != null) {
+        await suppliersApi.updateEntity(entityDialogTarget.entityId, { name, note })
+      }
+      setEntityDialogOpen(false)
+      await mutateEntities()
+      await mutateAccounts()
+    } catch (e) {
+      alert(`保存失败: ${(e as Error).message}`)
+    } finally {
+      setEntitySubmitting(false)
+    }
+  }
+  const handleDeleteEntity = async (e: { id: number; name: string; accountCount: number }) => {
+    if (e.accountCount > 0) {
+      alert(`主体「${e.name}」下还有 ${e.accountCount} 个服务账号，先把账号迁出或解绑主体再删除`)
+      return
+    }
+    if (!confirm(`确定删除主体「${e.name}」？此操作不可撤销。`)) return
+    try {
+      await suppliersApi.deleteEntity(e.id)
+      // 若刚刚选中的就是这个主体，回退到货源整体
+      if (selectedGroup?.entityId === e.id) {
+        setSelectedGroup({ ...selectedGroup, entityId: undefined, entityName: undefined })
+      }
+      await mutateEntities()
+      await mutateAccounts()
+    } catch (err) {
+      alert(`删除失败: ${(err as Error).message}`)
+    }
+  }
 
   /** 按当前用户的 provider 范围过滤货源选项(添加/编辑云账号时,只能选自己能管的云)。 */
   const filterByProviderScope = (arr: SupplySourceItem[]) => {
@@ -911,20 +1111,42 @@ export default function AccountsPage() {
     return [...arr].sort((a, b) => a.provider.localeCompare(b.provider))
   }, [sources, editForm.supplier_id, visibleProviders])
 
+  /** 编辑弹窗当前选中货源下可选主体列表（按名字排序） */
+  const entitiesForEditSource = useMemo(() => {
+    if (!editForm.supply_source_id) return [] as EntityItem[]
+    const ssid = Number(editForm.supply_source_id)
+    return entities
+      .filter((e) => e.supply_source_id === ssid)
+      .sort((a, b) => (a.name || "").localeCompare(b.name || "", "zh-CN"))
+  }, [entities, editForm.supply_source_id])
+
+  /** 新建弹窗当前选中货源下可选主体列表 */
+  const entitiesForCreateSource = useMemo(() => {
+    if (!form.supply_source_id) return [] as EntityItem[]
+    const ssid = Number(form.supply_source_id)
+    return entities
+      .filter((e) => e.supply_source_id === ssid)
+      .sort((a, b) => (a.name || "").localeCompare(b.name || "", "zh-CN"))
+  }, [entities, form.supply_source_id])
+
   const load = useCallback(async () => {
-    await Promise.all([mutateAccounts(), mutateSources()])
-  }, [mutateAccounts, mutateSources])
+    await Promise.all([mutateAccounts(), mutateSources(), mutateEntities()])
+  }, [mutateAccounts, mutateSources, mutateEntities])
 
   const loadDetail = useCallback(async (id: number) => {
     try { setSelectedId(id); setShowCreds(false); setCreds(null); const d = await accountsApi.get(id); setDetail(d) }
     catch (e) { console.error(e) }
   }, [])
 
-  const tree = useMemo(() => buildTree(accounts, sources), [accounts, sources])
+  const tree = useMemo(() => buildTree(accounts, sources, entities), [accounts, sources, entities])
 
+  // 选中节点的过滤：货源必匹配；如果带 entityId 则进一步过滤主体（null=未分配）
   const groupAccounts = useMemo(() => {
     if (!selectedGroup) return []
-    return accounts.filter((a) => a.supply_source_id === selectedGroup.supplySourceId)
+    const inSrc = accounts.filter((a) => a.supply_source_id === selectedGroup.supplySourceId)
+    if (selectedGroup.entityId === undefined) return inSrc
+    if (selectedGroup.entityId === null) return inSrc.filter((a) => a.entity_id == null)
+    return inSrc.filter((a) => a.entity_id === selectedGroup.entityId)
   }, [accounts, selectedGroup])
 
   // ─── 服务账号分页(client-side):每页 N 张卡片 ────────────────
@@ -941,6 +1163,19 @@ export default function AccountsPage() {
     setSelectedId(null); setDetail(null); setShowCreds(false); setCreds(null)
     setBulkSelectedIds(new Set())  // 切货源时清空批量选择
     setAccountsPage(1)              // 切货源时回到第 1 页
+  }
+
+  const handleSelectEntity = (
+    supplierName: string,
+    supplySourceId: number,
+    provider: string,
+    entityId: number | null,
+    entityName: string | null,
+  ) => {
+    setSelectedGroup({ supplierName, supplySourceId, provider, entityId, entityName })
+    setSelectedId(null); setDetail(null); setShowCreds(false); setCreds(null)
+    setBulkSelectedIds(new Set())
+    setAccountsPage(1)
   }
 
   // ─── 批量分配服务账号到另一个货源 ─────────────────────
@@ -1107,6 +1342,7 @@ export default function AccountsPage() {
   const emptyForm = () => ({
     supplier_id: "",
     supply_source_id: "",
+    entity_id: "",
     name: "",
     external_project_id: "",
     secret_json: "",
@@ -1200,9 +1436,19 @@ export default function AccountsPage() {
           alert(e instanceof Error ? e.message : "GCP 配置无效")
           return
         }
+      } else if (formProvider === "taiji") {
+        try {
+          const p = parseTaijiCredentialJson(form.secret_json)
+          external_id = p.external_id
+          secret_data = p.secret_data
+        } catch (e) {
+          alert(e instanceof Error ? e.message : "Taiji 配置无效")
+          return
+        }
       }
       await accountsApi.create({
         supply_source_id: ssid,
+        entity_id: form.entity_id ? Number(form.entity_id) : null,
         name: form.name,
         external_project_id: external_id,
         secret_data,
@@ -1284,6 +1530,7 @@ export default function AccountsPage() {
     const base = {
       supplier_id: String(detail.supplier_id),
       supply_source_id: String(detail.supply_source_id),
+      entity_id: detail.entity_id != null ? String(detail.entity_id) : "",
       name: detail.name,
       external_project_id: detail.external_project_id,
       secret_json: "",
@@ -1294,6 +1541,7 @@ export default function AccountsPage() {
       azure_client_secret: "",
       azure_json: "",
     }
+    editOriginalEntityRef.current = detail.entity_id ?? null
     editAzureCredsRef.current = null
     if (detail.provider === "azure") {
       try {
@@ -1345,6 +1593,19 @@ export default function AccountsPage() {
           base.secret_json = JSON.stringify(sj, null, 2)
         }
       } catch { /* 留空 */ }
+    } else if (detail.provider === "taiji") {
+      try {
+        const c = (await accountsApi.credentials(detail.id)) as Record<string, unknown>
+        base.secret_json = JSON.stringify(
+          {
+            api_base: String(c.api_base ?? ""),
+            access_token: String(c.access_token ?? ""),
+            admin_user_id: String(c.admin_user_id ?? detail.external_project_id ?? ""),
+          },
+          null,
+          2,
+        )
+      } catch { /* 留空 */ }
     }
     setEditCredMode("fields")
     setEditForm(base)
@@ -1368,6 +1629,18 @@ export default function AccountsPage() {
       }
       if (newSsid !== detail.supply_source_id) {
         payload.supply_source_id = newSsid
+        // 货源切换时后端会自动清主体，前端这一步无需再发 entity_id；
+        // 如果用户在切换后又选了目标货源下的主体，下面 entity diff 逻辑会再补发。
+      }
+      // entity_id diff：与原始值对比；若仅切货源未变主体选择，则保留默认 = ""（与原始一致才不发）
+      const origEntity = editOriginalEntityRef.current
+      const formEntity = editForm.entity_id ? Number(editForm.entity_id) : null
+      if (formEntity !== origEntity || newSsid !== detail.supply_source_id) {
+        if (formEntity == null) {
+          if (origEntity != null) payload.clear_entity = true
+        } else {
+          payload.entity_id = formEntity
+        }
       }
       if (editProvider === "azure") {
         let merged: { tenant_id: string; client_id: string; client_secret: string; subscription_id: string }
@@ -1411,6 +1684,15 @@ export default function AccountsPage() {
             payload.secret_data = p.secret_data
           } catch (e) {
             alert(e instanceof Error ? e.message : "GCP 配置无效")
+            return
+          }
+        } else if (editProvider === "taiji") {
+          try {
+            const p = parseTaijiCredentialJson(editForm.secret_json)
+            payload.external_project_id = p.external_id
+            payload.secret_data = p.secret_data
+          } catch (e) {
+            alert(e instanceof Error ? e.message : "Taiji 配置无效")
             return
           }
         } else {
@@ -1474,6 +1756,8 @@ export default function AccountsPage() {
                         setForm((f) => ({
                           ...f,
                           supply_source_id: v,
+                          // 切货源 → 主体清空（主体绑定具体货源）
+                          entity_id: v !== f.supply_source_id ? "" : f.entity_id,
                           ...(prov && prov !== "azure" ? { order_method: "" } : {}),
                         }))
                       }}
@@ -1489,6 +1773,31 @@ export default function AccountsPage() {
                       </SelectContent>
                     </Select>
                   </div>
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-xs">主体（可选）</Label>
+                  <Select
+                    value={form.entity_id || ENTITY_SELECT_UNASSIGNED}
+                    onValueChange={(v) =>
+                      setForm((f) => ({ ...f, entity_id: v === ENTITY_SELECT_UNASSIGNED ? "" : v }))
+                    }
+                    disabled={!form.supply_source_id}
+                  >
+                    <SelectTrigger className={cn("h-9", CTRL_SURFACE)}>
+                      <SelectValue placeholder={form.supply_source_id ? "选择主体（默认未分配）" : "请先选云"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={ENTITY_SELECT_UNASSIGNED}>{UNASSIGNED_ENTITY_LABEL}</SelectItem>
+                      {entitiesForCreateSource.map((e) => (
+                        <SelectItem key={e.id} value={String(e.id)}>{e.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {isAdmin && form.supply_source_id && (
+                    <p className="text-[10px] text-muted-foreground">
+                      在左侧树「{form.supply_source_id ? PROVIDER_LABELS[formSourcesForSupplier.find((s) => String(s.id) === form.supply_source_id)?.provider ?? ""] ?? "" : ""}」行尾的「+」按钮可新增主体。
+                    </p>
+                  )}
                 </div>
                 {sources.length === 0 && (
                   <p className="text-xs text-muted-foreground">请先在「供应商管理」中创建供应商并添加货源。</p>
@@ -1627,6 +1936,11 @@ export default function AccountsPage() {
                   node={node}
                   selectedGroup={selectedGroup}
                   onSelectGroup={handleSelectGroup}
+                  onSelectEntity={handleSelectEntity}
+                  isAdmin={isAdmin}
+                  onCreateEntity={openCreateEntity}
+                  onEditEntity={openEditEntity}
+                  onDeleteEntity={handleDeleteEntity}
                 />
               ))}
           </div>
@@ -1837,6 +2151,8 @@ export default function AccountsPage() {
                           setEditForm((f) => ({
                             ...f,
                             supply_source_id: v,
+                            // 货源变了 → 主体必须清空（主体绑定具体货源）
+                            entity_id: v !== f.supply_source_id ? "" : f.entity_id,
                             ...(prov && prov !== "azure" ? { order_method: "" } : {}),
                           }))
                         }}
@@ -1852,6 +2168,26 @@ export default function AccountsPage() {
                         </SelectContent>
                       </Select>
                     </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs">主体（可选）</Label>
+                    <Select
+                      value={editForm.entity_id || ENTITY_SELECT_UNASSIGNED}
+                      onValueChange={(v) =>
+                        setEditForm((f) => ({ ...f, entity_id: v === ENTITY_SELECT_UNASSIGNED ? "" : v }))
+                      }
+                      disabled={!editForm.supply_source_id}
+                    >
+                      <SelectTrigger className={cn("h-9", CTRL_SURFACE)}>
+                        <SelectValue placeholder={editForm.supply_source_id ? "选择主体（默认未分配）" : "请先选云"} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={ENTITY_SELECT_UNASSIGNED}>{UNASSIGNED_ENTITY_LABEL}</SelectItem>
+                        {entitiesForEditSource.map((e) => (
+                          <SelectItem key={e.id} value={String(e.id)}>{e.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                   <div className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5 space-y-2">
                     <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">云管信息</p>
@@ -1980,7 +2316,17 @@ export default function AccountsPage() {
                   <img src={`/${selectedGroup.provider}.svg`} alt={selectedGroup.provider} className="w-6 h-6 shrink-0 mt-0.5" />
                   <div>
                     <h2 className="text-lg font-semibold text-foreground leading-tight">{selectedGroup.supplierName}</h2>
-                    <p className="text-sm text-muted-foreground mt-0.5">{PROVIDER_LABELS[selectedGroup.provider] ?? selectedGroup.provider.toUpperCase()}</p>
+                    <p className="text-sm text-muted-foreground mt-0.5">
+                      {PROVIDER_LABELS[selectedGroup.provider] ?? selectedGroup.provider.toUpperCase()}
+                      {selectedGroup.entityId !== undefined && (
+                        <>
+                          <span className="mx-1.5 text-muted-foreground/60">/</span>
+                          <span className={selectedGroup.entityId === null ? "italic" : ""}>
+                            {selectedGroup.entityName ?? UNASSIGNED_ENTITY_LABEL}
+                          </span>
+                        </>
+                      )}
+                    </p>
                   </div>
                 </div>
                 <p className="text-sm text-muted-foreground mt-2">{groupAccounts.length} 个服务账号</p>
@@ -2240,6 +2586,50 @@ export default function AccountsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ─── 主体 CRUD（仅 cloud_admin 可触发开启） ─── */}
+      <Dialog open={entityDialogOpen} onOpenChange={(o) => { if (!entitySubmitting) setEntityDialogOpen(o) }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Building2 className="w-5 h-5" />
+              {entityDialogMode === "create" ? "新增主体" : "编辑主体"}
+            </DialogTitle>
+            <DialogDescription>
+              所属货源：{entityDialogTarget?.supplierName ?? "—"} / {(PROVIDER_LABELS[entityDialogTarget?.provider ?? ""] ?? (entityDialogTarget?.provider ?? "").toUpperCase())}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div>
+              <Label className="text-xs">主体名称 <span className="text-destructive">*</span></Label>
+              <Input
+                className={cn("h-9", CTRL_SURFACE)}
+                value={entityForm.name}
+                onChange={(e) => setEntityForm({ ...entityForm, name: e.target.value })}
+                placeholder="如 某某科技有限公司"
+                maxLength={200}
+              />
+            </div>
+            <div>
+              <Label className="text-xs">备注</Label>
+              <Textarea
+                className={cn(CTRL_SURFACE)}
+                value={entityForm.note}
+                onChange={(e) => setEntityForm({ ...entityForm, note: e.target.value })}
+                placeholder="选填，最多 500 字"
+                maxLength={500}
+                rows={3}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEntityDialogOpen(false)} disabled={entitySubmitting}>取消</Button>
+            <Button onClick={submitEntity} disabled={entitySubmitting || !entityForm.name.trim()}>
+              {entitySubmitting ? <><Loader2 className="w-4 h-4 mr-1 animate-spin" />保存中…</> : "保存"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
@@ -2249,11 +2639,25 @@ export default function AccountsPage() {
 interface TreeCallbacks {
   selectedGroup: SelectedSupplySource | null
   onSelectGroup: (supplierName: string, supplySourceId: number, provider: string) => void
+  onSelectEntity: (
+    supplierName: string,
+    supplySourceId: number,
+    provider: string,
+    entityId: number | null,
+    entityName: string | null,
+  ) => void
+  isAdmin: boolean
+  onCreateEntity: (supplySourceId: number, supplierName: string, provider: string) => void
+  onEditEntity: (entity: { id: number; name: string; note: string | null; supplySourceId: number }) => void
+  onDeleteEntity: (entity: { id: number; name: string; accountCount: number }) => void
 }
 
-function SupplierNode({ node, selectedGroup, onSelectGroup }: { node: SupplierTreeNode } & TreeCallbacks) {
+function SupplierNode({ node, ...rest }: { node: SupplierTreeNode } & TreeCallbacks) {
   const [open, setOpen] = useState(true)
-  const total = node.sources.reduce((s, x) => s + x.accounts.length, 0)
+  const total = node.sources.reduce(
+    (s, x) => s + x.entities.reduce((t, e) => t + e.accounts.length, 0),
+    0,
+  )
   return (
     <div className="mb-1">
       <button type="button" onClick={() => setOpen(!open)} className="flex items-center gap-2 w-full px-2 py-1.5 rounded hover:bg-accent text-sm font-semibold text-foreground">
@@ -2267,8 +2671,7 @@ function SupplierNode({ node, selectedGroup, onSelectGroup }: { node: SupplierTr
           key={src.supplySourceId}
           supplierName={node.supplierName}
           src={src}
-          selectedGroup={selectedGroup}
-          onSelectGroup={onSelectGroup}
+          {...rest}
         />
       ))}
     </div>
@@ -2280,27 +2683,135 @@ function SourceNode({
   src,
   selectedGroup,
   onSelectGroup,
+  onSelectEntity,
+  isAdmin,
+  onCreateEntity,
+  onEditEntity,
+  onDeleteEntity,
 }: {
   supplierName: string
-  src: { supplySourceId: number; provider: string; accounts: ServiceAccount[] }
+  src: SourceBucket
 } & TreeCallbacks) {
-  const isSelected = selectedGroup?.supplySourceId === src.supplySourceId
+  const [open, setOpen] = useState(true)
+  const isSelected =
+    selectedGroup?.supplySourceId === src.supplySourceId && selectedGroup?.entityId === undefined
   const pl = PROVIDER_LABELS[src.provider] ?? src.provider.toUpperCase()
+  const total = src.entities.reduce((s, e) => s + e.accounts.length, 0)
   return (
     <div className="ml-4">
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          onClick={() => setOpen(!open)}
+          className="flex items-center justify-center w-5 h-5 rounded hover:bg-accent text-muted-foreground"
+          aria-label={open ? "折叠" : "展开"}
+        >
+          {open ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+        </button>
+        <button
+          type="button"
+          onClick={() => onSelectGroup(supplierName, src.supplySourceId, src.provider)}
+          className={cn(
+            "flex items-center gap-2 flex-1 px-2 py-1 rounded text-sm",
+            isSelected ? "bg-primary/20 text-primary font-medium" : "text-muted-foreground hover:bg-accent",
+          )}
+        >
+          <img src={`/${src.provider}.svg`} alt={src.provider} className="w-3.5 h-3.5" />
+          <FolderOpen className="w-3.5 h-3.5" />
+          <span>{pl}</span>
+          <span className="ml-auto text-xs">{total}</span>
+        </button>
+        {isAdmin && (
+          <button
+            type="button"
+            onClick={(ev) => { ev.stopPropagation(); onCreateEntity(src.supplySourceId, supplierName, src.provider) }}
+            title="新增主体"
+            className="w-5 h-5 flex items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+          >
+            <Plus className="w-3.5 h-3.5" />
+          </button>
+        )}
+      </div>
+      {open && src.entities.map((bucket) => (
+        <EntityNode
+          key={bucket.entityId ?? "__unassigned__"}
+          supplierName={supplierName}
+          supplySourceId={src.supplySourceId}
+          provider={src.provider}
+          bucket={bucket}
+          selectedGroup={selectedGroup}
+          onSelectEntity={onSelectEntity}
+          isAdmin={isAdmin}
+          onEditEntity={onEditEntity}
+          onDeleteEntity={onDeleteEntity}
+        />
+      ))}
+    </div>
+  )
+}
+
+function EntityNode({
+  supplierName,
+  supplySourceId,
+  provider,
+  bucket,
+  selectedGroup,
+  onSelectEntity,
+  isAdmin,
+  onEditEntity,
+  onDeleteEntity,
+}: {
+  supplierName: string
+  supplySourceId: number
+  provider: string
+  bucket: EntityBucket
+  selectedGroup: SelectedSupplySource | null
+  onSelectEntity: TreeCallbacks["onSelectEntity"]
+  isAdmin: boolean
+  onEditEntity: TreeCallbacks["onEditEntity"]
+  onDeleteEntity: TreeCallbacks["onDeleteEntity"]
+}) {
+  const isSelected =
+    selectedGroup?.supplySourceId === supplySourceId
+    && selectedGroup?.entityId === bucket.entityId
+  const isUnassigned = bucket.entityId === null
+  const label = bucket.entityName ?? UNASSIGNED_ENTITY_LABEL
+  return (
+    <div className="ml-6 flex items-center gap-1">
       <button
         type="button"
-        onClick={() => onSelectGroup(supplierName, src.supplySourceId, src.provider)}
+        onClick={() => onSelectEntity(supplierName, supplySourceId, provider, bucket.entityId, bucket.entityName)}
         className={cn(
-          "flex items-center gap-2 w-full px-2 py-1 rounded text-sm",
+          "flex items-center gap-2 flex-1 px-2 py-1 rounded text-xs",
           isSelected ? "bg-primary/20 text-primary font-medium" : "text-muted-foreground hover:bg-accent",
+          isUnassigned && "italic",
         )}
+        title={bucket.note || undefined}
       >
-        <img src={`/${src.provider}.svg`} alt={src.provider} className="w-3.5 h-3.5" />
-        <FolderOpen className="w-3.5 h-3.5" />
-        <span>{pl}</span>
-        <span className="ml-auto text-xs">{src.accounts.length}</span>
+        <Building2 className="w-3 h-3 opacity-70" />
+        <span className="truncate">{label}</span>
+        <span className="ml-auto text-[10px]">{bucket.accounts.length}</span>
       </button>
+      {isAdmin && !isUnassigned && bucket.entityId !== null && (
+        <>
+          <button
+            type="button"
+            onClick={(ev) => { ev.stopPropagation(); onEditEntity({ id: bucket.entityId!, name: bucket.entityName ?? "", note: bucket.note, supplySourceId }) }}
+            title="编辑主体"
+            className="w-5 h-5 flex items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+          >
+            <Pencil className="w-3 h-3" />
+          </button>
+          <button
+            type="button"
+            onClick={(ev) => { ev.stopPropagation(); onDeleteEntity({ id: bucket.entityId!, name: bucket.entityName ?? "", accountCount: bucket.accounts.length }) }}
+            title="删除主体"
+            className="w-5 h-5 flex items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-red-400"
+          >
+            <Trash2 className="w-3 h-3" />
+          </button>
+        </>
+      )}
     </div>
   )
 }
