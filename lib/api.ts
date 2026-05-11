@@ -448,6 +448,18 @@ export const accountsApi = {
       target_provider: string
       target_supplier_name: string
     }>("/api/service-accounts/bulk-assign", { method: "POST", body: JSON.stringify(data) }),
+  /**
+   * 批量分配服务账号到主体（或清空主体）。
+   * 规则：target_entity_id=null 表示「未分配主体」；非空时账号必须与目标主体在同一货源下，
+   *       跨货源一律跳过。返回 { moved: 成功数, skipped: [{account_id, reason}], target_* }。
+   */
+  bulkAssignEntity: (data: { account_ids: number[]; target_entity_id: number | null }) =>
+    request<{
+      moved: number
+      skipped: { account_id: number; reason: string }[]
+      target_entity_id: number | null
+      target_entity_name: string | null
+    }>("/api/service-accounts/bulk-assign-entity", { method: "POST", body: JSON.stringify(data) }),
   suspend: (id: number) =>
     request<ServiceAccountDetail>(`/api/service-accounts/${id}/suspend`, { method: "POST" }),
   activate: (id: number) =>

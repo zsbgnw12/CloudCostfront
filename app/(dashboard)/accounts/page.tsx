@@ -955,6 +955,41 @@ export default function AccountsPage() {
   const { data: sources = [], mutate: mutateSources } = useSupplySourcesAll()
   const { data: entities = [], mutate: mutateEntities } = useEntitiesAll()
   const [selectedGroup, setSelectedGroup] = useState<SelectedSupplySource | null>(null)
+
+  // ─── 左侧树面板宽度（可拖拽，localStorage 持久化） ─────────────
+  // 主体名长了会顶到面板右边，挡住「✏️/🗑️」按钮，所以需要可拖宽。
+  // 范围 [280, 700] 是经验值：再窄货源名/账号数 badge 会换行，再宽挤压右侧账号卡片。
+  const SIDEBAR_MIN = 280
+  const SIDEBAR_MAX = 700
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+    if (typeof window === "undefined") return 320
+    const saved = Number(window.localStorage.getItem("accounts:sidebarWidth") ?? "")
+    return Number.isFinite(saved) && saved >= SIDEBAR_MIN && saved <= SIDEBAR_MAX ? saved : 320
+  })
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    window.localStorage.setItem("accounts:sidebarWidth", String(sidebarWidth))
+  }, [sidebarWidth])
+  const onSidebarDragStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    const startX = e.clientX
+    const startW = sidebarWidth
+    const onMove = (ev: MouseEvent) => {
+      const next = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, startW + (ev.clientX - startX)))
+      setSidebarWidth(next)
+    }
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove)
+      document.removeEventListener("mouseup", onUp)
+      document.body.style.cursor = ""
+      document.body.style.userSelect = ""
+    }
+    document.addEventListener("mousemove", onMove)
+    document.addEventListener("mouseup", onUp)
+    // 拖动过程中防选中文字、统一光标
+    document.body.style.cursor = "col-resize"
+    document.body.style.userSelect = "none"
+  }, [sidebarWidth])
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [detail, setDetail] = useState<ServiceAccountDetail | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
@@ -1272,6 +1307,52 @@ export default function AccountsPage() {
       alert(`批量分配失败：${e instanceof Error ? e.message : String(e)}`)
     } finally {
       setBulkSubmitting(false)
+    }
+  }
+
+  // ─── 批量分配服务账号到主体（同一货源内） ─────────────────
+  // selectedGroup 一定存在（界面才看得到批量按钮），且 bulkSelectedIds 只在切货源时清空，
+  // 所以这里的目标主体下拉只列「当前货源 supply_source_id」下的主体。
+  const [bulkEntityDialogOpen, setBulkEntityDialogOpen] = useState(false)
+  /** "" = 未选；ENTITY_SELECT_UNASSIGNED = 清空主体；其他 = entity id */
+  const [bulkTargetEntityId, setBulkTargetEntityId] = useState<string>("")
+  const [bulkEntitySubmitting, setBulkEntitySubmitting] = useState(false)
+
+  const bulkEntityCandidates = useMemo(() => {
+    if (!selectedGroup) return [] as EntityItem[]
+    return entities
+      .filter((e) => e.supply_source_id === selectedGroup.supplySourceId)
+      .sort((a, b) => (a.name || "").localeCompare(b.name || "", "zh-CN"))
+  }, [entities, selectedGroup])
+
+  const openBulkEntityDialog = () => {
+    setBulkTargetEntityId("")
+    setBulkEntityDialogOpen(true)
+  }
+
+  const submitBulkAssignEntity = async () => {
+    if (!bulkTargetEntityId || bulkSelectedIds.size === 0) return
+    const targetEntityId =
+      bulkTargetEntityId === ENTITY_SELECT_UNASSIGNED ? null : Number(bulkTargetEntityId)
+    setBulkEntitySubmitting(true)
+    try {
+      const r = await accountsApi.bulkAssignEntity({
+        account_ids: Array.from(bulkSelectedIds),
+        target_entity_id: targetEntityId,
+      })
+      const target = r.target_entity_name ?? "未分配主体"
+      let msg = `已迁移 ${r.moved} 个到「${target}」`
+      if (r.skipped.length > 0) {
+        msg += `；跳过 ${r.skipped.length} 个（${r.skipped.map((s) => `#${s.account_id}:${s.reason}`).join("；")}）`
+      }
+      alert(msg)
+      setBulkEntityDialogOpen(false)
+      setBulkSelectedIds(new Set())
+      await Promise.all([mutateAccounts(), mutateEntities()])
+    } catch (e) {
+      alert(`批量分配主体失败：${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setBulkEntitySubmitting(false)
     }
   }
 
@@ -1738,7 +1819,10 @@ export default function AccountsPage() {
   return (
     <div className="flex h-[calc(100vh-4rem)] gap-0">
       {/* ─── Left: Tree Panel ─── */}
-      <div className="w-80 border-r border-border flex flex-col bg-card/50">
+      <div
+        className="shrink-0 flex flex-col bg-card/50"
+        style={{ width: sidebarWidth }}
+      >
         <div className="flex items-center justify-between p-4 border-b border-border">
           <h2 className="text-sm font-semibold text-foreground">货源列表</h2>
           <div className="flex items-center gap-1">
@@ -1975,6 +2059,15 @@ export default function AccountsPage() {
           </div>
         </ScrollArea>
       </div>
+
+      {/* 拖拽手柄：替代原 border-r，鼠标 hover 高亮 + 拖动调宽度 */}
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        title="拖动调整列表宽度"
+        onMouseDown={onSidebarDragStart}
+        className="w-1 bg-border hover:bg-primary/60 active:bg-primary cursor-col-resize transition-colors shrink-0 select-none"
+      />
 
       {/* ─── Right Panel ─── */}
       <div className="flex-1 overflow-y-auto">
@@ -2375,9 +2468,13 @@ export default function AccountsPage() {
                     </Button>
                   </div>
                 ) : (
-                  <div className="flex items-center gap-3 bg-card border border-primary/50 rounded-lg px-3 py-2">
+                  <div className="flex items-center gap-3 bg-card border border-primary/50 rounded-lg px-3 py-2 flex-wrap">
                     <span className="text-sm text-foreground">已选 <b className="text-primary">{bulkSelectedIds.size}</b> 个</span>
-                    <Button size="sm" onClick={openBulkDialog}>批量分配到…</Button>
+                    <Button size="sm" onClick={openBulkDialog}>分配货源…</Button>
+                    <Button size="sm" variant="outline" onClick={openBulkEntityDialog}>
+                      <Building2 className="w-4 h-4 mr-1" />
+                      分配主体…
+                    </Button>
                     <Button
                       size="sm"
                       variant="destructive"
@@ -2567,6 +2664,60 @@ export default function AccountsPage() {
               disabled={!bulkSingleProvider || !bulkTargetSSId || bulkSubmitting}
             >
               {bulkSubmitting ? "分配中…" : "确认分配"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ─── 批量分配主体（仅同一货源内有效） ─── */}
+      <Dialog open={bulkEntityDialogOpen} onOpenChange={(o) => { if (!bulkEntitySubmitting) setBulkEntityDialogOpen(o) }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Building2 className="w-5 h-5" />
+              批量分配主体
+            </DialogTitle>
+            <DialogDescription>
+              将选中的 <b className="text-primary">{bulkSelectedIds.size}</b> 个服务账号
+              {selectedGroup && (
+                <> 在「{selectedGroup.supplierName} / {PROVIDER_LABELS[selectedGroup.provider] ?? selectedGroup.provider.toUpperCase()}」下 </>
+              )}
+              分配到指定主体；跨货源的会被自动跳过。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div>
+              <Label className="text-xs">目标主体</Label>
+              <Select
+                value={bulkTargetEntityId}
+                onValueChange={(v) => setBulkTargetEntityId(v)}
+              >
+                <SelectTrigger className={cn("h-9", CTRL_SURFACE)}>
+                  <SelectValue placeholder="选择主体或「未分配主体」" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ENTITY_SELECT_UNASSIGNED}>{UNASSIGNED_ENTITY_LABEL}（清空主体）</SelectItem>
+                  {bulkEntityCandidates.map((e) => (
+                    <SelectItem key={e.id} value={String(e.id)}>
+                      {e.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {bulkEntityCandidates.length === 0 && (
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  当前货源下还没有主体。先到左侧树「+」按钮新建几个主体后再来分配。
+                </p>
+              )}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBulkEntityDialogOpen(false)} disabled={bulkEntitySubmitting}>取消</Button>
+            <Button
+              onClick={submitBulkAssignEntity}
+              disabled={bulkEntitySubmitting || !bulkTargetEntityId || bulkSelectedIds.size === 0}
+            >
+              {bulkEntitySubmitting ? <><Loader2 className="w-4 h-4 mr-1 animate-spin" />分配中…</> : "确认分配"}
             </Button>
           </DialogFooter>
         </DialogContent>
