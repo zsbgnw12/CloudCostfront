@@ -335,7 +335,7 @@ export function Header() {
           </DialogContent>
         </Dialog>
 
-        {/* Azure 邀请记录（仅 cloud_admin/cloud_ops 可见） */}
+        {/* Azure 邀请记录（cloud_admin / cloud_ops / cloud_azure 可见） */}
         <InvitationsMenu />
 
         {/* Notifications */}
@@ -474,7 +474,9 @@ function UserMenu() {
 }
 
 /* ───── Azure 邀请记录下拉 ─────────────────────────────────
- * 显示条件：角色是 cloud_admin 或 cloud_ops。
+ * 显示条件：角色是 cloud_admin / cloud_ops / cloud_azure
+ *   (与后端 main.py 上 /api/azure-consent 路由的 require_roles 完全对齐，
+ *    避免"按钮显示但 API 返 403"的不一致)。
  * 角标：pending 数量优先（红），无 pending 时显示 consumed 未验证数量（黄）。
  * 操作：复制链接 / 验证订阅 / 作废 / 打开完整列表。 */
 const INVITE_STATUS_MAP: Record<string, { label: string; className: string }> = {
@@ -498,7 +500,9 @@ function timeAgoShort(dateStr: string | null | undefined) {
 
 function InvitationsMenu() {
   const { data: me } = useSWR("auth:me", () => authApi.me(), { revalidateOnFocus: false })
-  const canSee = (me?.roles ?? []).some((r) => r === "cloud_admin" || r === "cloud_ops")
+  const canSee = (me?.roles ?? []).some(
+    (r) => r === "cloud_admin" || r === "cloud_ops" || r === "cloud_azure",
+  )
 
   // 仅在有权限时才轮询邀请列表（30s），避免无权限用户反复打 403
   const { data: invites, mutate } = useSWR<AzureConsentInvite[]>(
