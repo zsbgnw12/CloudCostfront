@@ -1019,7 +1019,17 @@ export default function AccountsPage() {
   // 当前用户的 visible_providers — null 表示全量(admin/ops)
   const { data: me } = useSWR("auth:me", () => authApi.me(), { revalidateOnFocus: false })
   const visibleProviders = me?.visible_providers  // null = 全量;["aws"] = 仅 AWS
-  const isAdmin = (me?.roles ?? []).includes("cloud_admin")
+  /** 当前用户能否管理某 provider 下的主体（增/改/删）。
+   *  - admin/ops (visibleProviders === null) → 任意 provider
+   *  - cloud_<provider> → 自己的 provider
+   *  与后端 ensure_provider_visible 完全对齐。 */
+  const canManageEntityProvider = useCallback(
+    (provider: string) => {
+      if (!visibleProviders) return true
+      return visibleProviders.includes(provider)
+    },
+    [visibleProviders],
+  )
 
   // ─── 主体 CRUD 对话框状态 ────────────────────────────────────
   const [entityDialogOpen, setEntityDialogOpen] = useState(false)
@@ -1812,9 +1822,9 @@ export default function AccountsPage() {
                       ))}
                     </SelectContent>
                   </Select>
-                  {isAdmin && form.supply_source_id && (
+                  {form.supply_source_id && canManageEntityProvider(formSourcesForSupplier.find((s) => String(s.id) === form.supply_source_id)?.provider ?? "") && (
                     <p className="text-[10px] text-muted-foreground">
-                      在左侧树「{form.supply_source_id ? PROVIDER_LABELS[formSourcesForSupplier.find((s) => String(s.id) === form.supply_source_id)?.provider ?? ""] ?? "" : ""}」行尾的「+」按钮可新增主体。
+                      在左侧树「{PROVIDER_LABELS[formSourcesForSupplier.find((s) => String(s.id) === form.supply_source_id)?.provider ?? ""] ?? ""}」行尾的「+」按钮可新增主体。
                     </p>
                   )}
                 </div>
@@ -1956,7 +1966,7 @@ export default function AccountsPage() {
                   selectedGroup={selectedGroup}
                   onSelectGroup={handleSelectGroup}
                   onSelectEntity={handleSelectEntity}
-                  isAdmin={isAdmin}
+                  canManageEntityProvider={canManageEntityProvider}
                   onCreateEntity={openCreateEntity}
                   onEditEntity={openEditEntity}
                   onDeleteEntity={handleDeleteEntity}
@@ -2606,7 +2616,7 @@ export default function AccountsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* ─── 主体 CRUD（仅 cloud_admin 可触发开启） ─── */}
+      {/* ─── 主体 CRUD（cloud_admin/ops 任意 provider；cloud_<provider> 限本云） ─── */}
       <Dialog open={entityDialogOpen} onOpenChange={(o) => { if (!entitySubmitting) setEntityDialogOpen(o) }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
@@ -2665,7 +2675,8 @@ interface TreeCallbacks {
     entityId: number | null,
     entityName: string | null,
   ) => void
-  isAdmin: boolean
+  /** 该用户能否管理某 provider 下的主体（增/改/删）。admin/ops → 任意 provider。 */
+  canManageEntityProvider: (provider: string) => boolean
   onCreateEntity: (supplySourceId: number, supplierName: string, provider: string) => void
   onEditEntity: (entity: { id: number; name: string; note: string | null; supplySourceId: number }) => void
   onDeleteEntity: (entity: { id: number; name: string; accountCount: number }) => void
@@ -2703,7 +2714,7 @@ function SourceNode({
   selectedGroup,
   onSelectGroup,
   onSelectEntity,
-  isAdmin,
+  canManageEntityProvider,
   onCreateEntity,
   onEditEntity,
   onDeleteEntity,
@@ -2716,6 +2727,7 @@ function SourceNode({
     selectedGroup?.supplySourceId === src.supplySourceId && selectedGroup?.entityId === undefined
   const pl = PROVIDER_LABELS[src.provider] ?? src.provider.toUpperCase()
   const total = src.entities.reduce((s, e) => s + e.accounts.length, 0)
+  const canManage = canManageEntityProvider(src.provider)
   return (
     <div className="ml-4">
       <div className="flex items-center gap-1">
@@ -2740,7 +2752,7 @@ function SourceNode({
           <span>{pl}</span>
           <span className="ml-auto text-xs">{total}</span>
         </button>
-        {isAdmin && (
+        {canManage && (
           <button
             type="button"
             onClick={(ev) => { ev.stopPropagation(); onCreateEntity(src.supplySourceId, supplierName, src.provider) }}
@@ -2760,7 +2772,7 @@ function SourceNode({
           bucket={bucket}
           selectedGroup={selectedGroup}
           onSelectEntity={onSelectEntity}
-          isAdmin={isAdmin}
+          canManage={canManage}
           onEditEntity={onEditEntity}
           onDeleteEntity={onDeleteEntity}
         />
@@ -2776,7 +2788,7 @@ function EntityNode({
   bucket,
   selectedGroup,
   onSelectEntity,
-  isAdmin,
+  canManage,
   onEditEntity,
   onDeleteEntity,
 }: {
@@ -2786,7 +2798,7 @@ function EntityNode({
   bucket: EntityBucket
   selectedGroup: SelectedSupplySource | null
   onSelectEntity: TreeCallbacks["onSelectEntity"]
-  isAdmin: boolean
+  canManage: boolean
   onEditEntity: TreeCallbacks["onEditEntity"]
   onDeleteEntity: TreeCallbacks["onDeleteEntity"]
 }) {
@@ -2811,7 +2823,7 @@ function EntityNode({
         <span className="truncate">{label}</span>
         <span className="ml-auto text-[10px]">{bucket.accounts.length}</span>
       </button>
-      {isAdmin && !isUnassigned && bucket.entityId !== null && (
+      {canManage && !isUnassigned && bucket.entityId !== null && (
         <>
           <button
             type="button"
