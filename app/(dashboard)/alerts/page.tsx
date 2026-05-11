@@ -14,7 +14,7 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { alertsApi, accountsApi, type AlertRule, type AlertHistory, type RuleStatus } from "@/lib/api"
-import { useAccounts, useSuppliers, useSupplySourcesAll } from "@/hooks/use-data"
+import { useAccounts, useSuppliers, useSupplySourcesAll, useEntitiesAll } from "@/hooks/use-data"
 
 const PROVIDER_LABELS: Record<string, string> = { aws: "AWS", gcp: "GCP", azure: "Azure", taiji: "Taiji" }
 
@@ -25,10 +25,17 @@ const THRESHOLD_LABELS: Record<string, string> = {
   monthly_minimum_commitment: "月最低承诺用量",
   account_lifetime_quota: "账号总配额(达 90% 触发)",
   monthly_budget_multi: "多项目月预算合计",
+  yearly_budget_multi: "多项目年预算合计",
 }
+
+/** 多 project 类型的 threshold_type 集合(同一个判断点用)。 */
+const MULTI_PROJECT_TYPES = new Set(["monthly_budget_multi", "yearly_budget_multi"])
 
 /** 账号总配额告警 — 触发百分比硬编码 90%(后端 alert_service.py 也用同一常量)。 */
 const ACCOUNT_QUOTA_TRIGGER_PCT = 90
+
+/** Select 不接受空字符串作为 value，用哨兵表示"全部主体"。 */
+const ENTITY_FILTER_ALL = "__all_entities__"
 
 const fmt = (v: number) => `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
@@ -38,6 +45,7 @@ export default function AlertsPage() {
   const { data: accounts = [] } = useAccounts()
   const { data: suppliers = [] } = useSuppliers()
   const { data: supplySources = [] } = useSupplySourcesAll()
+  const { data: entities = [] } = useEntitiesAll()
   const [ruleStatusData, setRuleStatusData] = useState<RuleStatus[]>([])
   const [loading, setLoading] = useState(true)
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -45,12 +53,14 @@ export default function AlertsPage() {
     name: "",
     supplier_id: "",
     supply_source_id: "",
+    /** "" = 不限制(该货源下任意主体)；string(entity.id) = 锁定到该主体 */
+    entity_id: "",
     account_id: "",
     threshold_type: "daily_absolute",
     threshold_value: "",
     notify_webhook: "",
     notify_email: "",
-    // monthly_budget_multi 用:勾选的 project external_project_id 列表
+    // monthly_budget_multi / yearly_budget_multi 用：勾选的 project external_project_id 列表
     multi_account_ids: [] as number[],
   })
   const [actionLoading, setActionLoading] = useState<string | null>(null)
@@ -76,21 +86,36 @@ export default function AlertsPage() {
       .sort((a, b) => a.provider.localeCompare(b.provider))
   }, [supplySources, form.supplier_id])
 
+  /** 当前选中货源下的主体下拉候选。 */
+  const formEntities = useMemo(() => {
+    if (!form.supply_source_id) return [] as typeof entities
+    const ssid = Number(form.supply_source_id)
+    return entities
+      .filter((e) => e.supply_source_id === ssid)
+      .sort((a, b) => (a.name || "").localeCompare(b.name || "", "zh-CN"))
+  }, [entities, form.supply_source_id])
+
   const formAccounts = useMemo(() => {
     if (!form.supplier_id) return []
     const allowedSourceIds = new Set(formSources.map((s) => s.id))
     return accounts.filter((a) => {
       if (!allowedSourceIds.has(a.supply_source_id)) return false
       if (form.supply_source_id && a.supply_source_id !== Number(form.supply_source_id)) return false
+      // entity_id="" 表示不限制；entity_id=string(id) 表示仅本主体下账号
+      if (form.entity_id) {
+        const eid = Number(form.entity_id)
+        if (a.entity_id !== eid) return false
+      }
       return true
     })
-  }, [accounts, form.supplier_id, form.supply_source_id, formSources])
+  }, [accounts, form.supplier_id, form.supply_source_id, form.entity_id, formSources])
 
   const resetForm = () =>
     setForm({
       name: "",
       supplier_id: "",
       supply_source_id: "",
+      entity_id: "",
       account_id: "",
       threshold_type: "daily_absolute",
       threshold_value: "",
@@ -128,22 +153,24 @@ export default function AlertsPage() {
       notify_email: rule.notify_email ?? "",
       supplier_id: "",
       supply_source_id: "",
+      entity_id: "",
       account_id: "",
       multi_account_ids: [] as number[],
     }
-    // 多项目类型:把逗号分隔的 external_project_id 反查回 account.id 列表
-    if (rule.threshold_type === "monthly_budget_multi" && rule.target_id) {
+    // 多项目类型(月/年):把逗号分隔的 external_project_id 反查回 account.id 列表
+    if (MULTI_PROJECT_TYPES.has(rule.threshold_type) && rule.target_id) {
       const ids = rule.target_id.split(",").map((s) => s.trim()).filter(Boolean)
       base.multi_account_ids = accounts
         .filter((a) => ids.includes(a.external_project_id))
         .map((a) => a.id)
     } else if (rule.target_id) {
-      // 单 project:回填三级选择器
+      // 单 project:回填四级选择器(供应商 / 货源 / 主体 / 账号)
       const acc = accounts.find((a) => a.external_project_id === rule.target_id)
       if (acc) {
         const ss = supplySources.find((s) => s.id === acc.supply_source_id)
         base.supplier_id = String(ss?.supplier_id ?? "")
         base.supply_source_id = String(acc.supply_source_id)
+        base.entity_id = acc.entity_id != null ? String(acc.entity_id) : ""
         base.account_id = String(acc.id)
       }
     }
@@ -156,8 +183,8 @@ export default function AlertsPage() {
       setActionLoading("save")
       let target_type = "project"
       let target_id: string | undefined
-      if (form.threshold_type === "monthly_budget_multi") {
-        // 多项目月预算合计:target_id = 逗号分隔的 external_project_id
+      if (MULTI_PROJECT_TYPES.has(form.threshold_type)) {
+        // 多项目月/年预算合计:target_id = 逗号分隔的 external_project_id
         const picked = accounts.filter((a) => form.multi_account_ids.includes(a.id))
         target_type = "project_group"
         target_id = picked.map((a) => a.external_project_id).join(",") || undefined
@@ -234,8 +261,8 @@ export default function AlertsPage() {
             <div className="space-y-4 py-4">
               <div className="space-y-2"><Label>规则名称</Label><Input placeholder="如：账号A日费用超限" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
 
-              {form.threshold_type === "monthly_budget_multi" ? (
-                /* 多项目模式:勾选多个账号(可跨供应商) */
+              {MULTI_PROJECT_TYPES.has(form.threshold_type) ? (
+                /* 多项目模式:勾选多个账号(可跨供应商)。每行带主体名便于辨别。 */
                 <div className="space-y-2">
                   <Label>服务账号(多选)</Label>
                   <div className="rounded-md border border-border max-h-56 overflow-y-auto p-2 space-y-1 bg-background/50">
@@ -266,6 +293,9 @@ export default function AlertsPage() {
                             <span className="truncate">{a.name}</span>
                             <span className="text-xs text-muted-foreground truncate">
                               ({a.external_project_id}) · {a.supplier_name}
+                              <span className={cn("ml-1", a.entity_name ? "" : "italic")}>
+                                · {a.entity_name ?? "未分配主体"}
+                              </span>
                             </span>
                           </label>
                         )
@@ -274,15 +304,17 @@ export default function AlertsPage() {
                   </div>
                   <p className="text-xs text-muted-foreground">
                     已选 <span className="text-foreground font-medium">{form.multi_account_ids.length}</span> 个账号 ·
-                    本月这些账号的费用合计 ≥ 阈值时触发告警。
+                    {form.threshold_type === "yearly_budget_multi"
+                      ? "本年这些账号的费用合计 ≥ 阈值时触发告警。"
+                      : "本月这些账号的费用合计 ≥ 阈值时触发告警。"}
                   </p>
                 </div>
               ) : (
                 <div className="space-y-2"><Label>服务账号</Label>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
                     <Select
                       value={form.supplier_id}
-                      onValueChange={(v) => setForm({ ...form, supplier_id: v, supply_source_id: "", account_id: "" })}
+                      onValueChange={(v) => setForm({ ...form, supplier_id: v, supply_source_id: "", entity_id: "", account_id: "" })}
                     >
                       <SelectTrigger><SelectValue placeholder="供应商" /></SelectTrigger>
                       <SelectContent>
@@ -293,7 +325,7 @@ export default function AlertsPage() {
                     </Select>
                     <Select
                       value={form.supply_source_id}
-                      onValueChange={(v) => setForm({ ...form, supply_source_id: v, account_id: "" })}
+                      onValueChange={(v) => setForm({ ...form, supply_source_id: v, entity_id: "", account_id: "" })}
                       disabled={!form.supplier_id}
                     >
                       <SelectTrigger><SelectValue placeholder="货源" /></SelectTrigger>
@@ -302,6 +334,19 @@ export default function AlertsPage() {
                           <SelectItem key={src.id} value={String(src.id)}>
                             {PROVIDER_LABELS[src.provider] ?? src.provider.toUpperCase()}
                           </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select
+                      value={form.entity_id || ENTITY_FILTER_ALL}
+                      onValueChange={(v) => setForm({ ...form, entity_id: v === ENTITY_FILTER_ALL ? "" : v, account_id: "" })}
+                      disabled={!form.supply_source_id}
+                    >
+                      <SelectTrigger><SelectValue placeholder="主体" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={ENTITY_FILTER_ALL}>全部主体</SelectItem>
+                        {formEntities.map((ent) => (
+                          <SelectItem key={ent.id} value={String(ent.id)}>{ent.name}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
@@ -340,6 +385,7 @@ export default function AlertsPage() {
                       <SelectItem value="monthly_minimum_commitment">月最低承诺用量 (USD)</SelectItem>
                       <SelectItem value="account_lifetime_quota">账号总配额(达 90% 触发)</SelectItem>
                       <SelectItem value="monthly_budget_multi">多项目月预算合计 (USD)</SelectItem>
+                      <SelectItem value="yearly_budget_multi">多项目年预算合计 (USD)</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -348,6 +394,7 @@ export default function AlertsPage() {
                     form.threshold_type === "monthly_minimum_commitment" ? "承诺最低金额" :
                     form.threshold_type === "account_lifetime_quota" ? "总配额上限 (USD)" :
                     form.threshold_type === "monthly_budget_multi" ? "月预算合计 (USD)" :
+                    form.threshold_type === "yearly_budget_multi" ? "年预算合计 (USD)" :
                     "阈值"
                   }</Label>
                   <Input
@@ -356,7 +403,8 @@ export default function AlertsPage() {
                     placeholder={
                       form.threshold_type === "monthly_minimum_commitment" ? "月最低消费额 (USD)" :
                       form.threshold_type === "account_lifetime_quota" ? "如 1000,累计达 900 美元时告警" :
-                      form.threshold_type === "monthly_budget_multi" ? "如 40000,4 个 project 合计预算" :
+                      form.threshold_type === "monthly_budget_multi" ? "如 40000,4 个 project 合计月预算" :
+                      form.threshold_type === "yearly_budget_multi" ? "如 480000,4 个 project 合计年预算" :
                       ""
                     }
                     value={form.threshold_value}
@@ -371,7 +419,7 @@ export default function AlertsPage() {
               !form.name ||
               !form.threshold_value ||
               actionLoading === "save" ||
-              (form.threshold_type === "monthly_budget_multi"
+              (MULTI_PROJECT_TYPES.has(form.threshold_type)
                 ? form.multi_account_ids.length === 0
                 : !form.account_id)
             }>
