@@ -2112,8 +2112,10 @@ export default function AccountsPage() {
 
       {/* ─── Right Panel ─── */}
       <div className="flex-1 overflow-y-auto">
-        {/* ─── 顶部搜索栏：始终可见。selectedGroup 决定 scope（无则全局） ─── */}
-        <div className="sticky top-0 z-20 bg-background/95 backdrop-blur px-6 pt-4 pb-3 border-b border-border">
+        {/* ─── 顶部搜索栏：始终可见。selectedGroup 决定 scope（无则全局）
+              主题：与左侧货源列表统一用 bg-card/50 半透明卡片色 + backdrop-blur，
+              避免 bg-background/95 在暗色主题下变成"黑一坨"突兀块。 */}
+        <div className="sticky top-0 z-20 bg-card/50 backdrop-blur-md px-6 pt-4 pb-3 border-b border-border">
           <div className="relative max-w-2xl">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
             <Input
@@ -2125,7 +2127,9 @@ export default function AccountsPage() {
                   ? `在「${selectedGroup.supplierName} / ${PROVIDER_LABELS[selectedGroup.provider] ?? selectedGroup.provider.toUpperCase()}${selectedGroup.entityId !== undefined ? ` / ${selectedGroup.entityName ?? UNASSIGNED_ENTITY_LABEL}` : ""}」内搜索服务账号...`
                   : "全局搜索：账号名 / 项目 ID / 供应商 / 主体 / 客户编号..."
               }
-              className="pl-9 pr-9 h-9"
+              // 用 Input 自身默认的 transparent + dark:bg-input/30 透明效果，
+              // 不叠加 CTRL_SURFACE（那个是给弹窗用的更深底色，整块黑会跟左侧不协调）
+              className="pl-9 pr-9 h-9 border-border/60"
             />
             {searchQuery && (
               <button
