@@ -1063,6 +1063,9 @@ export default function AccountsPage() {
   // Taiji 清理重复数据的 running 状态；真正的 handler 在 load 声明之后定义
   // （deps 引用 load —— 不能放在 load 上面，否则 TDZ）。
   const [taijiCleanupRunning, setTaijiCleanupRunning] = useState(false)
+  // Taiji 按月份同步（一次性操作触发 backend collector 按日拉 blob）
+  const [taijiSyncRunning, setTaijiSyncRunning] = useState(false)
+  const [taijiSyncStatus, setTaijiSyncStatus] = useState<string>("")
 
   /** 当前用户能否管理某 provider 下的主体（增/改/删）。
    *  - admin/ops (visibleProviders === null) → 任意 provider
@@ -1192,6 +1195,63 @@ export default function AccountsPage() {
     try { setSelectedId(id); setShowCreds(false); setCreds(null); const d = await accountsApi.get(id); setDetail(d) }
     catch (e) { console.error(e) }
   }, [])
+
+  // Taiji 按月份同步：触发 backend celery 按月份范围拉 blob 落库。
+  // 用 prompt 让用户输入 YYYY-MM；轮询 task 状态 3s 一次，最长 10 分钟。
+  const handleTaijiSyncMonth = useCallback(async () => {
+    if (!selectedGroup || selectedGroup.provider !== "taiji") return
+    const defaultMonth = "2026-04"
+    const m = window.prompt("输入要同步的月份 (YYYY-MM)：", defaultMonth) || ""
+    const trimmed = m.trim()
+    if (!trimmed) return
+    if (!/^\d{4}-\d{2}$/.test(trimmed)) {
+      alert("月份格式无效，需要 YYYY-MM，如 2026-04")
+      return
+    }
+    setTaijiSyncRunning(true)
+    setTaijiSyncStatus("dispatching...")
+    try {
+      const r = await syncApi.triggerAll(trimmed, trimmed, "taiji")
+      // 单 provider 走 task_id；多 provider 自动 dispatch 走 task_ids
+      const tid =
+        (r as { task_id?: string }).task_id ??
+        ((r as unknown as { task_ids?: string[] }).task_ids?.[0] ?? null)
+      if (!tid) {
+        alert(`同步已分发，但响应里无 task_id：${JSON.stringify(r)}`)
+        return
+      }
+      setTaijiSyncStatus("PENDING")
+      // 轮询：3s 一次，最长 10 分钟
+      const startMs = Date.now()
+      const maxMs = 10 * 60 * 1000
+      let finalStatus = "TIMEOUT"
+      let finalResult: unknown = null
+      while (Date.now() - startMs < maxMs) {
+        await new Promise((res) => setTimeout(res, 3000))
+        try {
+          const st = await syncApi.status(tid)
+          setTaijiSyncStatus(st.status)
+          if (st.status === "SUCCESS" || st.status === "FAILURE") {
+            finalStatus = st.status
+            finalResult = st.result
+            break
+          }
+        } catch (e) {
+          // 网络抖动忽略，继续轮询
+          console.warn("sync status poll err:", e)
+        }
+      }
+      const summary = finalResult
+        ? `${finalStatus}\n\nresult: ${JSON.stringify(finalResult).slice(0, 800)}`
+        : finalStatus
+      alert(`${trimmed} 月份同步完成：${summary}`)
+      await load()
+    } catch (e) {
+      alert(`触发同步失败：${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setTaijiSyncRunning(false)
+    }
+  }, [selectedGroup, load])
 
   // Taiji 清理重复数据 handler。必须在 load 声明之后定义（deps 引用 load）
   const handleTaijiCleanup = useCallback(async () => {
@@ -2630,17 +2690,33 @@ export default function AccountsPage() {
                     {/* Taiji 货源 + cloud_admin 才显示「清理重复数据」按钮，用于修复
                         历史"每账号一个独立 CA/DS"导致的 billing 行 N× 放大。一次性操作。 */}
                     {selectedGroup?.provider === "taiji" && isCloudAdmin && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-7 text-xs gap-1"
-                        onClick={handleTaijiCleanup}
-                        disabled={taijiCleanupRunning}
-                        title="把每账号独立 CA/DS 合并为 supply_source 级共享 CA/DS，去重 billing 行（修复历史数据被 N× 放大）"
-                      >
-                        {taijiCleanupRunning ? <Loader2 className="w-3 h-3 animate-spin" /> : <AlertTriangle className="w-3 h-3" />}
-                        清理重复数据
-                      </Button>
+                      <>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-xs gap-1"
+                          onClick={handleTaijiSyncMonth}
+                          disabled={taijiSyncRunning || taijiCleanupRunning}
+                          title="按 YYYY-MM 月份触发后台 collector 同步该月份的所有日快照（默认 2026-04，可改）"
+                        >
+                          {taijiSyncRunning ? <Loader2 className="w-3 h-3 animate-spin" /> : <Clock className="w-3 h-3" />}
+                          按月同步
+                          {taijiSyncRunning && taijiSyncStatus && (
+                            <span className="ml-1 text-[10px] text-muted-foreground">· {taijiSyncStatus}</span>
+                          )}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-xs gap-1"
+                          onClick={handleTaijiCleanup}
+                          disabled={taijiCleanupRunning || taijiSyncRunning}
+                          title="把每账号独立 CA/DS 合并为 supply_source 级共享 CA/DS，去重 billing 行（修复历史数据被 N× 放大）"
+                        >
+                          {taijiCleanupRunning ? <Loader2 className="w-3 h-3 animate-spin" /> : <AlertTriangle className="w-3 h-3" />}
+                          清理重复数据
+                        </Button>
+                      </>
                     )}
                   </div>
                 )}
