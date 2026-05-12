@@ -51,9 +51,22 @@ async function tryRefresh(): Promise<boolean> {
   return _refreshingPromise
 }
 
+/** 全局 fetch 超时；批量类长操作（如 Taiji 批量建几百账号）走更长的超时阈值。 */
+const _DEFAULT_FETCH_TIMEOUT_MS = 30_000
+const _LONG_FETCH_PATTERNS = [
+  /\/api\/service-accounts\/taiji-from-blob$/,
+  /\/api\/service-accounts\/bulk-/,
+  /\/api\/service-accounts\/hard\//,  // 删除大批账号
+]
+
+function _timeoutFor(url: string): number {
+  for (const re of _LONG_FETCH_PATTERNS) if (re.test(url)) return 120_000
+  return _DEFAULT_FETCH_TIMEOUT_MS
+}
+
 async function doFetch(url: string, restInit: RequestInit, headers: Record<string, string>): Promise<Response> {
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 30000)
+  const timeout = setTimeout(() => controller.abort(), _timeoutFor(url))
   try {
     return await fetch(url, {
       ...restInit,
