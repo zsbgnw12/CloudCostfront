@@ -55,12 +55,13 @@ async function tryRefresh(): Promise<boolean> {
 const _DEFAULT_FETCH_TIMEOUT_MS = 30_000
 const _LONG_FETCH_PATTERNS = [
   /\/api\/service-accounts\/taiji-from-blob$/,
+  /\/api\/service-accounts\/taiji-cleanup-duplicates$/,
   /\/api\/service-accounts\/bulk-/,
   /\/api\/service-accounts\/hard\//,  // 删除大批账号
 ]
 
 function _timeoutFor(url: string): number {
-  for (const re of _LONG_FETCH_PATTERNS) if (re.test(url)) return 120_000
+  for (const re of _LONG_FETCH_PATTERNS) if (re.test(url)) return 300_000  // 5 min for heavy ops
   return _DEFAULT_FETCH_TIMEOUT_MS
 }
 
