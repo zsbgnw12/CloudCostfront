@@ -266,20 +266,33 @@ export default function DailyReportPage() {
   }, [filteredRows, filteredAccounts, accountIds])
 
   // Line chart: daily total per account（金额 × 折扣系数，仅展示）
+  // Taiji 类聚合平台导入后单次可能 ~600+ 服务账号，直接画 600+ 条 Line 会撑爆图、卡死浏览器；
+  // 这里按账号总费用降序保留 Top N，其余合并为「其他」聚合线，再加一条「合计」。
+  const LINE_TOP_N = 10
   const lineChartData = useMemo(() => {
-    if (pivot.dates.length === 0) return { data: [], accountNames: [] }
+    if (pivot.dates.length === 0) return { data: [], accountNames: [], otherCount: 0 }
     const allAccounts = pivot.groups.flatMap((g) => g.accounts)
-    const accountNames = allAccounts.map((a) => a.name)
+    const sorted = [...allAccounts].sort((a, b) => b.total - a.total)
+    const topAccts = sorted.slice(0, LINE_TOP_N)
+    const restAccts = sorted.slice(LINE_TOP_N)
+    const hasOther = restAccts.length > 0
+    const accountNames = topAccts.map((a) => a.name)
+    if (hasOther) accountNames.push("其他")
     const f = costFactor
     const data = pivot.dates.map((d) => {
       const row: Record<string, unknown> = { date: d.slice(5) }
-      for (const a of allAccounts) {
+      for (const a of topAccts) {
         row[a.name] = ((a.dailyCosts.get(d) ?? 0) * f)
+      }
+      if (hasOther) {
+        let sum = 0
+        for (const a of restAccts) sum += (a.dailyCosts.get(d) ?? 0)
+        row["其他"] = sum * f
       }
       row["合计"] = (pivot.dateTotals.get(d) ?? 0) * f
       return row
     })
-    return { data, accountNames }
+    return { data, accountNames, otherCount: restAccts.length }
   }, [pivot, costFactor])
 
   /** 单账号：每日服务堆叠柱（来自计费汇总 API，与旧「计费」页一致） */
@@ -497,7 +510,14 @@ export default function DailyReportPage() {
           {/* 2 每日费用趋势 */}
           <Card className="bg-card border-border">
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium">每日费用趋势（{chartScopeLabel}）</CardTitle>
+              <CardTitle className="text-sm font-medium">
+                每日费用趋势（{chartScopeLabel}）
+                {lineChartData.otherCount > 0 && (
+                  <span className="ml-2 text-xs font-normal text-muted-foreground">
+                    · 仅展示 Top {LINE_TOP_N}，其余 {lineChartData.otherCount} 个账号合并到「其他」
+                  </span>
+                )}
+              </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="h-[350px]">
