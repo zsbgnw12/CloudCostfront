@@ -1060,47 +1060,9 @@ export default function AccountsPage() {
   const visibleProviders = me?.visible_providers  // null = 全量;["aws"] = 仅 AWS
   const isCloudAdmin = (me?.roles ?? []).includes("cloud_admin")
 
-  // ─── Taiji 清理重复数据（一次性脏数据修复） ──────────────────────────
-  // 仅 cloud_admin 在选中 Taiji 货源时可见。先 dry_run 弹结果 → 用户确认 → 再真删。
+  // Taiji 清理重复数据的 running 状态；真正的 handler 在 load 声明之后定义
+  // （deps 引用 load —— 不能放在 load 上面，否则 TDZ）。
   const [taijiCleanupRunning, setTaijiCleanupRunning] = useState(false)
-  const handleTaijiCleanup = useCallback(async () => {
-    if (!selectedGroup || selectedGroup.provider !== "taiji") return
-    setTaijiCleanupRunning(true)
-    try {
-      const dry = await accountsApi.taijiCleanupDuplicates({
-        supply_source_id: selectedGroup.supplySourceId,
-        dry_run: true,
-      })
-      const lines = [
-        `Taiji 重复数据清理 — 干跑结果：`,
-        ``,
-        `- 当前 Taiji DataSource 数: ${dry.total_data_sources_before}`,
-        `- 将保留的 DS id: ${dry.kept_data_source_id}`,
-        `- 将删除孤儿 DataSource: ${dry.orphan_data_sources_removed}`,
-        `- 将删除孤儿 CloudAccount: ~${dry.orphan_cloud_accounts_removed}`,
-        `- 将删除的重复 billing 行: ${dry.billing_rows_deleted_as_dup}`,
-        `- 重定向到保留 DS 的 billing 行: ${dry.billing_rows_reassigned_to_kept}`,
-        `- 需要 repoint 的 Project: ${dry.projects_repointed}`,
-        ``,
-        `继续执行真改库？此操作不可撤销。`,
-      ]
-      if (!confirm(lines.join("\n"))) return
-      const real = await accountsApi.taijiCleanupDuplicates({
-        supply_source_id: selectedGroup.supplySourceId,
-        dry_run: false,
-      })
-      alert(
-        `清理完成：删 ${real.billing_rows_deleted_as_dup} 行重复 billing，` +
-        `${real.orphan_data_sources_removed} 个孤儿 DS / ${real.orphan_cloud_accounts_removed} 个孤儿 CA，` +
-        `${real.projects_repointed} 个 Project 重定向到 DS#${real.kept_data_source_id}`,
-      )
-      await load()
-    } catch (e) {
-      alert(`清理失败：${e instanceof Error ? e.message : String(e)}`)
-    } finally {
-      setTaijiCleanupRunning(false)
-    }
-  }, [selectedGroup, load])
 
   /** 当前用户能否管理某 provider 下的主体（增/改/删）。
    *  - admin/ops (visibleProviders === null) → 任意 provider
@@ -1230,6 +1192,46 @@ export default function AccountsPage() {
     try { setSelectedId(id); setShowCreds(false); setCreds(null); const d = await accountsApi.get(id); setDetail(d) }
     catch (e) { console.error(e) }
   }, [])
+
+  // Taiji 清理重复数据 handler。必须在 load 声明之后定义（deps 引用 load）
+  const handleTaijiCleanup = useCallback(async () => {
+    if (!selectedGroup || selectedGroup.provider !== "taiji") return
+    setTaijiCleanupRunning(true)
+    try {
+      const dry = await accountsApi.taijiCleanupDuplicates({
+        supply_source_id: selectedGroup.supplySourceId,
+        dry_run: true,
+      })
+      const lines = [
+        `Taiji 重复数据清理 — 干跑结果：`,
+        ``,
+        `- 当前 Taiji DataSource 数: ${dry.total_data_sources_before}`,
+        `- 将保留的 DS id: ${dry.kept_data_source_id}`,
+        `- 将删除孤儿 DataSource: ${dry.orphan_data_sources_removed}`,
+        `- 将删除孤儿 CloudAccount: ~${dry.orphan_cloud_accounts_removed}`,
+        `- 将删除的重复 billing 行: ${dry.billing_rows_deleted_as_dup}`,
+        `- 重定向到保留 DS 的 billing 行: ${dry.billing_rows_reassigned_to_kept}`,
+        `- 需要 repoint 的 Project: ${dry.projects_repointed}`,
+        ``,
+        `继续执行真改库？此操作不可撤销。`,
+      ]
+      if (!confirm(lines.join("\n"))) return
+      const real = await accountsApi.taijiCleanupDuplicates({
+        supply_source_id: selectedGroup.supplySourceId,
+        dry_run: false,
+      })
+      alert(
+        `清理完成：删 ${real.billing_rows_deleted_as_dup} 行重复 billing，` +
+        `${real.orphan_data_sources_removed} 个孤儿 DS / ${real.orphan_cloud_accounts_removed} 个孤儿 CA，` +
+        `${real.projects_repointed} 个 Project 重定向到 DS#${real.kept_data_source_id}`,
+      )
+      await load()
+    } catch (e) {
+      alert(`清理失败：${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setTaijiCleanupRunning(false)
+    }
+  }, [selectedGroup, load])
 
   // 按 visible_providers 过滤树数据：cloud_<provider> 用户只看本云的货源/主体；
   // admin/ops (visibleProviders === null) 看全量。后端已对 /supply-sources/all 等
