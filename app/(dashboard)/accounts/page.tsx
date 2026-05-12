@@ -1197,7 +1197,13 @@ export default function AccountsPage() {
   }, [])
 
   // Taiji 按月份同步：触发 backend celery 按月份范围拉 blob 落库。
-  // 用 prompt 让用户输入 YYYY-MM；轮询 task 状态 3s 一次，最长 10 分钟。
+  //
+  // 任务结构是两层：
+  //   外层 sync_all_task：负责分发，结果是 {"dispatched": N, "task_ids": [...]}
+  //   内层 sync_data_source 任务：每个 DS 一个，真正按天拉 blob + 写 billing
+  //
+  // 之前只 poll 外层，外层会瞬间 SUCCESS（"我已分发"），用户误以为同步完了
+  // 但实际数据还在内层 task 里跑。修复：外层 SUCCESS 后自动顺着 task_ids 继续 poll。
   const handleTaijiSyncMonth = useCallback(async () => {
     if (!selectedGroup || selectedGroup.provider !== "taiji") return
     const defaultMonth = "2026-04"
@@ -1210,41 +1216,68 @@ export default function AccountsPage() {
     }
     setTaijiSyncRunning(true)
     setTaijiSyncStatus("dispatching...")
-    try {
-      const r = await syncApi.triggerAll(trimmed, trimmed, "taiji")
-      // 单 provider 走 task_id；多 provider 自动 dispatch 走 task_ids
-      const tid =
-        (r as { task_id?: string }).task_id ??
-        ((r as unknown as { task_ids?: string[] }).task_ids?.[0] ?? null)
-      if (!tid) {
-        alert(`同步已分发，但响应里无 task_id：${JSON.stringify(r)}`)
-        return
-      }
-      setTaijiSyncStatus("PENDING")
-      // 轮询：3s 一次，最长 10 分钟
+
+    const pollUntilTerminal = async (taskId: string, label: string, maxMs: number) => {
       const startMs = Date.now()
-      const maxMs = 10 * 60 * 1000
-      let finalStatus = "TIMEOUT"
-      let finalResult: unknown = null
       while (Date.now() - startMs < maxMs) {
         await new Promise((res) => setTimeout(res, 3000))
         try {
-          const st = await syncApi.status(tid)
-          setTaijiSyncStatus(st.status)
-          if (st.status === "SUCCESS" || st.status === "FAILURE") {
-            finalStatus = st.status
-            finalResult = st.result
-            break
-          }
+          const st = await syncApi.status(taskId)
+          setTaijiSyncStatus(`${label}:${st.status}`)
+          if (st.status === "SUCCESS" || st.status === "FAILURE") return st
         } catch (e) {
-          // 网络抖动忽略，继续轮询
           console.warn("sync status poll err:", e)
         }
       }
-      const summary = finalResult
-        ? `${finalStatus}\n\nresult: ${JSON.stringify(finalResult).slice(0, 800)}`
-        : finalStatus
-      alert(`${trimmed} 月份同步完成：${summary}`)
+      return { status: "TIMEOUT", result: null }
+    }
+
+    try {
+      const r = await syncApi.triggerAll(trimmed, trimmed, "taiji")
+      const outerTid =
+        (r as { task_id?: string }).task_id ??
+        ((r as unknown as { task_ids?: string[] }).task_ids?.[0] ?? null)
+      if (!outerTid) {
+        alert(`同步已分发，但响应里无 task_id：${JSON.stringify(r)}`)
+        return
+      }
+
+      // 第一阶段：等外层 dispatcher（瞬间完成）
+      setTaijiSyncStatus("dispatcher PENDING")
+      const outer = await pollUntilTerminal(outerTid, "dispatcher", 2 * 60 * 1000)
+
+      // 解出内层 task_ids
+      const innerIds: string[] = (() => {
+        const res = outer.result as unknown
+        if (!res || typeof res !== "object") return []
+        const obj = res as { task_ids?: unknown }
+        return Array.isArray(obj.task_ids) ? obj.task_ids.filter((x): x is string => typeof x === "string") : []
+      })()
+
+      if (outer.status !== "SUCCESS" || innerIds.length === 0) {
+        alert(
+          `${trimmed} 月份外层任务终态: ${outer.status}\n` +
+          `result: ${JSON.stringify(outer.result).slice(0, 800)}\n` +
+          (innerIds.length === 0 ? "（无内层 task_ids，可能该月无 Taiji DS 可同步）" : ""),
+        )
+        return
+      }
+
+      // 第二阶段：并行 poll 所有内层任务（一般只有 1 个，因为只有 shared DS）
+      setTaijiSyncStatus(`inner ×${innerIds.length} PENDING`)
+      const innerResults = await Promise.all(
+        innerIds.map((tid, i) => pollUntilTerminal(tid, `inner[${i}]`, 15 * 60 * 1000)),
+      )
+      const okCnt = innerResults.filter((x) => x.status === "SUCCESS").length
+      const failCnt = innerResults.filter((x) => x.status === "FAILURE").length
+      const timeoutCnt = innerResults.filter((x) => x.status === "TIMEOUT").length
+
+      const sampleResult = innerResults[0]?.result
+      alert(
+        `${trimmed} 月份同步完成：\n\n` +
+        `内层任务 ${innerIds.length} 个 → SUCCESS ${okCnt} / FAILURE ${failCnt} / TIMEOUT ${timeoutCnt}\n\n` +
+        `首个内层 result: ${sampleResult ? JSON.stringify(sampleResult).slice(0, 600) : "(空)"}`,
+      )
       await load()
     } catch (e) {
       alert(`触发同步失败：${e instanceof Error ? e.message : String(e)}`)
