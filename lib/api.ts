@@ -460,6 +460,30 @@ export const accountsApi = {
       target_entity_id: number | null
       target_entity_name: string | null
     }>("/api/service-accounts/bulk-assign-entity", { method: "POST", body: JSON.stringify(data) }),
+
+  /**
+   * Taiji 货源专用：粘贴一份日快照 JSON + Blob SAS URL，批量创建该 supply_source
+   * 下的所有 (username, token) 服务账号；后续按日由后台 collector 拉同一 SAS URL
+   * 下的 {date}_UTC+0.json。
+   * - 仅读 JSON 顶层 "taiji" section；其他 section 不导入
+   * - external_project_id = "<username>:<token_name>"
+   * - 已存在的 external_project_id 跳过（幂等可重复粘贴）
+   */
+  bulkImportTaiji: (data: {
+    supply_source_id: number
+    entity_id?: number | null
+    blob_sas_url: string
+    snapshot_json: Record<string, unknown>
+  }) =>
+    request<{
+      created: number
+      skipped: { external_project_id: string; reason: string }[]
+      total_parsed: number
+      section_used: string
+    }>("/api/service-accounts/taiji-bulk-import", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
   suspend: (id: number) =>
     request<ServiceAccountDetail>(`/api/service-accounts/${id}/suspend`, { method: "POST" }),
   activate: (id: number) =>

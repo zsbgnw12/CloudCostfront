@@ -294,6 +294,9 @@ function CredentialSection({
   onAzureJsonChange: (v: string) => void
   /** Azure Tab A 的渲染体，由父组件提供（它持有 invite 状态） */
   inviteSection?: React.ReactNode
+  /** Taiji 专用：Blob SAS URL（容器级 sr=c、只读 sp=r） */
+  taijiBlobSasUrl?: string
+  onTaijiBlobSasUrlChange?: (v: string) => void
 }) {
   const p = provider.toLowerCase()
   const isAzure = p === "azure"
@@ -391,19 +394,36 @@ function CredentialSection({
       {p === "taiji" && (
         <>
           <div className="space-y-1.5">
-            <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Taiji 接入凭证</p>
+            <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Taiji 接入凭证（粘贴日快照 + Blob SAS URL）</p>
             <p className="text-[11px] text-muted-foreground leading-snug">
-              一段 JSON 包含 <code className="text-xs">api_base</code>、<code className="text-xs">access_token</code>、<code className="text-xs">admin_user_id</code>。
-              其中 <code className="text-xs">admin_user_id</code> 用作账号唯一标识（external_project_id）。
+              Taiji 走<b className="text-foreground">批量导入</b>：粘贴某日快照 JSON 全文（如
+              <code className="text-xs"> 2026-05-07_UTC+0.json</code>），后端从顶层
+              <code className="text-xs"> taiji</code> section 抽出所有
+              <code className="text-xs"> (username, token_name)</code> 对、为每对建一个服务账号。
+              后续按日由后台从同一 SAS URL 拉
+              <code className="text-xs"> {`{date}_UTC+0.json`}</code> 落库。
             </p>
           </div>
-          <Textarea
-            rows={8}
-            className={cn("font-mono text-xs min-h-[160px]", CTRL_SURFACE)}
-            placeholder={TAIJI_CRED_JSON_PLACEHOLDER}
-            value={secretJson}
-            onChange={(e) => onSecretJsonChange(e.target.value)}
-          />
+          <div className="space-y-1.5">
+            <Label className="text-xs">Blob SAS URL（容器级，只读）</Label>
+            <Input
+              type="url"
+              className={cn("font-mono text-xs h-9", CTRL_SURFACE)}
+              placeholder="https://<account>.blob.core.windows.net/<container>?sp=r&sr=c&...&sig=..."
+              value={taijiBlobSasUrl ?? ""}
+              onChange={(e) => onTaijiBlobSasUrlChange?.(e.target.value)}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">日快照 JSON 全文</Label>
+            <Textarea
+              rows={8}
+              className={cn("font-mono text-xs min-h-[160px]", CTRL_SURFACE)}
+              placeholder='{ "date_range": {...}, "taiji": { "<username>": { "<token_name>": {...} } }, ... }'
+              value={secretJson}
+              onChange={(e) => onSecretJsonChange(e.target.value)}
+            />
+          </div>
         </>
       )}
 
@@ -1007,6 +1027,7 @@ export default function AccountsPage() {
   )
 
   // external_project_id：入库的账号/订阅/项目 ID；Azure 与订阅字段同步，AWS/GCP 由下方 JSON 解析或编辑预填
+  // Taiji：不走单建路径，secret_json 复用为快照 JSON、taiji_blob_sas_url 单独存放 SAS
   const [form, setForm] = useState({
     supplier_id: "",
     supply_source_id: "",
@@ -1019,6 +1040,8 @@ export default function AccountsPage() {
     azure_client_id: "",
     azure_client_secret: "",
     azure_json: "",
+    /** Taiji 专用：日快照 SAS URL（按日拉 {date}_UTC+0.json）。其他 provider 忽略 */
+    taiji_blob_sas_url: "",
   })
 
   const [editForm, setEditForm] = useState({
@@ -1503,6 +1526,7 @@ export default function AccountsPage() {
     azure_client_id: "",
     azure_client_secret: "",
     azure_json: "",
+    taiji_blob_sas_url: "",
   })
 
   const handleCreate = async () => {
@@ -1511,6 +1535,52 @@ export default function AccountsPage() {
       const ssid = Number(form.supply_source_id)
       if (!form.supplier_id || !ssid) {
         alert("请选择供应商与云（货源）")
+        return
+      }
+
+      // Taiji 走专用批量导入路径（不进单建流程）：粘贴日快照 JSON + Blob SAS URL
+      // → 后端从 taiji section 抽取 (username, token) 批量建账号；secret_data={blob_sas_url}
+      if (formProvider === "taiji") {
+        const sasUrl = form.taiji_blob_sas_url.trim()
+        if (!sasUrl) {
+          alert("请填写 Blob SAS URL（容器级 sr=c，只读 sp=r）")
+          return
+        }
+        if (!sasUrl.startsWith("http://") && !sasUrl.startsWith("https://")) {
+          alert("Blob SAS URL 必须是 http(s) URL")
+          return
+        }
+        let snapshot: Record<string, unknown>
+        try {
+          snapshot = JSON.parse(form.secret_json) as Record<string, unknown>
+        } catch {
+          alert("快照 JSON 解析失败，请粘贴完整的 {date}_UTC+0.json 内容")
+          return
+        }
+        if (!snapshot || typeof snapshot !== "object" || !("taiji" in snapshot)) {
+          alert("JSON 必须包含顶层 'taiji' section")
+          return
+        }
+        try {
+          const r = await accountsApi.bulkImportTaiji({
+            supply_source_id: ssid,
+            entity_id: form.entity_id ? Number(form.entity_id) : null,
+            blob_sas_url: sasUrl,
+            snapshot_json: snapshot,
+          })
+          let msg = `Taiji 批量导入：新建 ${r.created} 个 / 跳过 ${r.skipped.length} 个 / 共解析 ${r.total_parsed} 个 (username:token)`
+          if (r.skipped.length > 0) {
+            msg += `\n跳过示例：${r.skipped.slice(0, 3).map((s) => `${s.external_project_id}(${s.reason})`).join("；")}`
+          }
+          alert(msg)
+        } catch (e) {
+          alert(`Taiji 批量导入失败：${e instanceof Error ? e.message : e}`)
+          return
+        }
+        setCreateOpen(false)
+        setCreateCredMode("fields")
+        setForm(emptyForm())
+        await load()
         return
       }
 
@@ -1587,16 +1657,8 @@ export default function AccountsPage() {
           alert(e instanceof Error ? e.message : "GCP 配置无效")
           return
         }
-      } else if (formProvider === "taiji") {
-        try {
-          const p = parseTaijiCredentialJson(form.secret_json)
-          external_id = p.external_id
-          secret_data = p.secret_data
-        } catch (e) {
-          alert(e instanceof Error ? e.message : "Taiji 配置无效")
-          return
-        }
       }
+      // Taiji 走 bulk-import 早退出，此处不会再到 taiji 分支
       await accountsApi.create({
         supply_source_id: ssid,
         entity_id: form.entity_id ? Number(form.entity_id) : null,
@@ -1956,52 +2018,55 @@ export default function AccountsPage() {
                 {sources.length === 0 && (
                   <p className="text-xs text-muted-foreground">请先在「供应商管理」中创建供应商并添加货源。</p>
                 )}
-                <div className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5 space-y-2">
-                  <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">云管信息</p>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div className="space-y-1.5 min-w-0">
-                      <Label className="text-xs">显示名称</Label>
-                      <Input
-                        className={cn("h-9", CTRL_SURFACE)}
-                        placeholder={formProvider === "azure" ? "租户名称或展示名称" : "在云管中展示的名称"}
-                        value={form.name}
-                        onChange={(e) => setForm({ ...form, name: e.target.value })}
-                      />
+                {/* Taiji 走批量导入路径：账号名称由 token_name 自动派生，云管信息无意义；其他云保留 */}
+                {formProvider !== "taiji" && (
+                  <div className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5 space-y-2">
+                    <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">云管信息</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="space-y-1.5 min-w-0">
+                        <Label className="text-xs">显示名称</Label>
+                        <Input
+                          className={cn("h-9", CTRL_SURFACE)}
+                          placeholder={formProvider === "azure" ? "租户名称或展示名称" : "在云管中展示的名称"}
+                          value={form.name}
+                          onChange={(e) => setForm({ ...form, name: e.target.value })}
+                        />
+                      </div>
+                      <div className="space-y-1.5 min-w-0">
+                        <Label className="text-xs text-muted-foreground">备注</Label>
+                        <Input
+                          className={cn("h-9", CTRL_SURFACE)}
+                          placeholder="可选"
+                          value={form.notes}
+                          onChange={(e) => setForm({ ...form, notes: e.target.value })}
+                        />
+                      </div>
                     </div>
-                    <div className="space-y-1.5 min-w-0">
-                      <Label className="text-xs text-muted-foreground">备注</Label>
-                      <Input
-                        className={cn("h-9", CTRL_SURFACE)}
-                        placeholder="可选"
-                        value={form.notes}
-                        onChange={(e) => setForm({ ...form, notes: e.target.value })}
-                      />
-                    </div>
+                    {formProvider === "azure" && (
+                      <div className="space-y-1.5 max-w-md">
+                        <Label className="text-xs text-muted-foreground">下单方式（Azure）</Label>
+                        <Select
+                          value={form.order_method || ORDER_METHOD_SELECT_SENTINEL}
+                          onValueChange={(v) =>
+                            setForm({ ...form, order_method: v === ORDER_METHOD_SELECT_SENTINEL ? "" : v })
+                          }
+                        >
+                          <SelectTrigger className={cn("h-9 w-full", CTRL_SURFACE)}>
+                            <SelectValue placeholder="选择下单方式" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value={ORDER_METHOD_SELECT_SENTINEL}>未选择</SelectItem>
+                            {ORDER_METHOD_OPTIONS.map((opt) => (
+                              <SelectItem key={opt} value={opt}>
+                                {opt}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
                   </div>
-                  {formProvider === "azure" && (
-                    <div className="space-y-1.5 max-w-md">
-                      <Label className="text-xs text-muted-foreground">下单方式（Azure）</Label>
-                      <Select
-                        value={form.order_method || ORDER_METHOD_SELECT_SENTINEL}
-                        onValueChange={(v) =>
-                          setForm({ ...form, order_method: v === ORDER_METHOD_SELECT_SENTINEL ? "" : v })
-                        }
-                      >
-                        <SelectTrigger className={cn("h-9 w-full", CTRL_SURFACE)}>
-                          <SelectValue placeholder="选择下单方式" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value={ORDER_METHOD_SELECT_SENTINEL}>未选择</SelectItem>
-                          {ORDER_METHOD_OPTIONS.map((opt) => (
-                            <SelectItem key={opt} value={opt}>
-                              {opt}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  )}
-                </div>
+                )}
                 <CredentialSection
                   provider={formProvider}
                   mode={createCredMode}
@@ -2017,6 +2082,8 @@ export default function AccountsPage() {
                   azureJson={form.azure_json}
                   onAzurePatch={(p) => setForm((f) => ({ ...f, ...p }))}
                   onAzureJsonChange={(v) => setForm({ ...form, azure_json: v })}
+                  taijiBlobSasUrl={form.taiji_blob_sas_url}
+                  onTaijiBlobSasUrlChange={(v) => setForm({ ...form, taiji_blob_sas_url: v })}
                   inviteSection={
                     <AzureInviteSection
                       accountName={form.name}
@@ -2032,7 +2099,9 @@ export default function AccountsPage() {
                 <Button
                   onClick={handleCreate}
                   disabled={
-                    !form.supplier_id || !form.supply_source_id || !form.name?.trim() || actionLoading === "create"
+                    !form.supplier_id || !form.supply_source_id || actionLoading === "create"
+                    // Taiji 走 bulk-import 不需要 form.name；其他云仍要求 name 必填
+                    || (formProvider !== "taiji" && !form.name?.trim())
                     || (formProvider === "azure" && createCredMode === "invite" && (
                       !inviteState.invite
                       || inviteState.invite.status !== "consumed"
@@ -2064,6 +2133,17 @@ export default function AccountsPage() {
                       try {
                         parseGcpCredentialJson(form.secret_json)
                         return false
+                      } catch {
+                        return true
+                      }
+                    })())
+                    || (formProvider === "taiji" && (() => {
+                      // 必须：SAS URL 非空、JSON 可解析且含 taiji 顶层 key
+                      const sas = form.taiji_blob_sas_url.trim()
+                      if (!sas.startsWith("http://") && !sas.startsWith("https://")) return true
+                      try {
+                        const o = JSON.parse(form.secret_json) as Record<string, unknown>
+                        return !o || typeof o !== "object" || !("taiji" in o)
                       } catch {
                         return true
                       }
