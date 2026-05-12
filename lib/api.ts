@@ -462,25 +462,25 @@ export const accountsApi = {
     }>("/api/service-accounts/bulk-assign-entity", { method: "POST", body: JSON.stringify(data) }),
 
   /**
-   * Taiji 货源专用：粘贴一份日快照 JSON + Blob SAS URL，批量创建该 supply_source
-   * 下的所有 (username, token) 服务账号；后续按日由后台 collector 拉同一 SAS URL
-   * 下的 {date}_UTC+0.json。
-   * - 仅读 JSON 顶层 "taiji" section；其他 section 不导入
+   * Taiji 货源专用：前端零输入，由后端从 settings.TAIJI_BLOB_SAS_URL 自动拉最新
+   * 一天的快照 JSON，发现所有 (username, token) 对并批量建账号。后续按日由后台
+   * collector 自动按日拉 {date}_UTC+0.json 落库。
+   * - 服务端从环境变量读取 SAS（前端不传 URL，不需粘贴 JSON）
+   * - 仅读 JSON 顶层 "taiji" section
    * - external_project_id = "<username>:<token_name>"
-   * - 已存在的 external_project_id 跳过（幂等可重复粘贴）
+   * - 已存在的跳过（幂等可重试）
    */
-  bulkImportTaiji: (data: {
+  taijiFromBlob: (data: {
     supply_source_id: number
     entity_id?: number | null
-    blob_sas_url: string
-    snapshot_json: Record<string, unknown>
   }) =>
     request<{
       created: number
       skipped: { external_project_id: string; reason: string }[]
       total_parsed: number
+      snapshot_date: string | null
       section_used: string
-    }>("/api/service-accounts/taiji-bulk-import", {
+    }>("/api/service-accounts/taiji-from-blob", {
       method: "POST",
       body: JSON.stringify(data),
     }),

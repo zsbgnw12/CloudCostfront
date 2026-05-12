@@ -394,35 +394,18 @@ function CredentialSection({
       {p === "taiji" && (
         <>
           <div className="space-y-1.5">
-            <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Taiji 接入凭证（粘贴日快照 + Blob SAS URL）</p>
+            <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Taiji 自动接入（无需任何输入）</p>
             <p className="text-[11px] text-muted-foreground leading-snug">
-              Taiji 走<b className="text-foreground">批量导入</b>：粘贴某日快照 JSON 全文（如
-              <code className="text-xs"> 2026-05-07_UTC+0.json</code>），后端从顶层
-              <code className="text-xs"> taiji</code> section 抽出所有
-              <code className="text-xs"> (username, token_name)</code> 对、为每对建一个服务账号。
-              后续按日由后台从同一 SAS URL 拉
-              <code className="text-xs"> {`{date}_UTC+0.json`}</code> 落库。
+              点击「添加」时，后端会用服务端配置的 Blob SAS URL（
+              <code className="text-xs">TAIJI_BLOB_SAS_URL</code>）自动拉最近一天的
+              <code className="text-xs"> {`{date}_UTC+0.json`}</code> 快照，从顶层
+              <code className="text-xs"> taiji</code> section 抽
+              <code className="text-xs"> (username, token_name)</code> 对，批量建服务账号。
+              后续按日由后台 collector 自动从同一 SAS URL 拉数据落库。
             </p>
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs">Blob SAS URL（容器级，只读）</Label>
-            <Input
-              type="url"
-              className={cn("font-mono text-xs h-9", CTRL_SURFACE)}
-              placeholder="https://<account>.blob.core.windows.net/<container>?sp=r&sr=c&...&sig=..."
-              value={taijiBlobSasUrl ?? ""}
-              onChange={(e) => onTaijiBlobSasUrlChange?.(e.target.value)}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs">日快照 JSON 全文</Label>
-            <Textarea
-              rows={8}
-              className={cn("font-mono text-xs min-h-[160px]", CTRL_SURFACE)}
-              placeholder='{ "date_range": {...}, "taiji": { "<username>": { "<token_name>": {...} } }, ... }'
-              value={secretJson}
-              onChange={(e) => onSecretJsonChange(e.target.value)}
-            />
+            <p className="text-[11px] text-muted-foreground leading-snug">
+              若提示「未配置 TAIJI_BLOB_SAS_URL」，请联系运维在 Container App 环境变量里加该值。
+            </p>
           </div>
         </>
       )}
@@ -1538,43 +1521,21 @@ export default function AccountsPage() {
         return
       }
 
-      // Taiji 走专用批量导入路径（不进单建流程）：粘贴日快照 JSON + Blob SAS URL
-      // → 后端从 taiji section 抽取 (username, token) 批量建账号；secret_data={blob_sas_url}
+      // Taiji 走后端自动发现路径：前端零输入，后端从 settings.TAIJI_BLOB_SAS_URL
+      // 自动拉最新快照、抽 (username, token) 批量建账号；secret_data 落入 sas_url
       if (formProvider === "taiji") {
-        const sasUrl = form.taiji_blob_sas_url.trim()
-        if (!sasUrl) {
-          alert("请填写 Blob SAS URL（容器级 sr=c，只读 sp=r）")
-          return
-        }
-        if (!sasUrl.startsWith("http://") && !sasUrl.startsWith("https://")) {
-          alert("Blob SAS URL 必须是 http(s) URL")
-          return
-        }
-        let snapshot: Record<string, unknown>
         try {
-          snapshot = JSON.parse(form.secret_json) as Record<string, unknown>
-        } catch {
-          alert("快照 JSON 解析失败，请粘贴完整的 {date}_UTC+0.json 内容")
-          return
-        }
-        if (!snapshot || typeof snapshot !== "object" || !("taiji" in snapshot)) {
-          alert("JSON 必须包含顶层 'taiji' section")
-          return
-        }
-        try {
-          const r = await accountsApi.bulkImportTaiji({
+          const r = await accountsApi.taijiFromBlob({
             supply_source_id: ssid,
             entity_id: form.entity_id ? Number(form.entity_id) : null,
-            blob_sas_url: sasUrl,
-            snapshot_json: snapshot,
           })
-          let msg = `Taiji 批量导入：新建 ${r.created} 个 / 跳过 ${r.skipped.length} 个 / 共解析 ${r.total_parsed} 个 (username:token)`
+          let msg = `Taiji 自动建账号：从 ${r.snapshot_date ?? "?"} 快照拉到 ${r.total_parsed} 个 (username:token)，新建 ${r.created} 个 / 跳过 ${r.skipped.length} 个`
           if (r.skipped.length > 0) {
             msg += `\n跳过示例：${r.skipped.slice(0, 3).map((s) => `${s.external_project_id}(${s.reason})`).join("；")}`
           }
           alert(msg)
         } catch (e) {
-          alert(`Taiji 批量导入失败：${e instanceof Error ? e.message : e}`)
+          alert(`Taiji 自动建账号失败：${e instanceof Error ? e.message : e}`)
           return
         }
         setCreateOpen(false)
@@ -2137,17 +2098,7 @@ export default function AccountsPage() {
                         return true
                       }
                     })())
-                    || (formProvider === "taiji" && (() => {
-                      // 必须：SAS URL 非空、JSON 可解析且含 taiji 顶层 key
-                      const sas = form.taiji_blob_sas_url.trim()
-                      if (!sas.startsWith("http://") && !sas.startsWith("https://")) return true
-                      try {
-                        const o = JSON.parse(form.secret_json) as Record<string, unknown>
-                        return !o || typeof o !== "object" || !("taiji" in o)
-                      } catch {
-                        return true
-                      }
-                    })())
+                    // Taiji 零输入，只需 supplier_id + supply_source_id（上面的通用条件已经覆盖）
                   }
                 >
                   {actionLoading === "create" && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
