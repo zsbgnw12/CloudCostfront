@@ -58,6 +58,7 @@ const _LONG_FETCH_PATTERNS = [
   /\/api\/service-accounts\/taiji-cleanup-duplicates$/,
   /\/api\/service-accounts\/bulk-/,
   /\/api\/service-accounts\/hard\//,  // 删除大批账号
+  /\/api\/sync\/refresh-summary/,  // billing_daily_summary 重算可能 1~5min
 ]
 
 function _timeoutFor(url: string): number {
@@ -652,6 +653,21 @@ export const syncApi = {
       body: JSON.stringify({ start_month, end_month, provider }),
     }),
   status: (taskId: string) => request<{ task_id: string; status: string; result: unknown }>(`/api/sync/status/${taskId}`),
+  /**
+   * 重建 billing_daily_summary 预聚合表（dashboard 读这张）。
+   * 不传日期 = 按 billing_summary 全量范围重算。
+   * 权限：cloud_admin / cloud_ops。
+   */
+  refreshSummary: (start_date?: string, end_date?: string) => {
+    const qs = new URLSearchParams()
+    if (start_date) qs.set("start_date", start_date)
+    if (end_date) qs.set("end_date", end_date)
+    const s = qs.toString()
+    return request<{ status: string; refreshed_range?: string; reason?: string }>(
+      `/api/sync/refresh-summary${s ? `?${s}` : ""}`,
+      { method: "POST" },
+    )
+  },
 }
 
 export const dashboardApi = {

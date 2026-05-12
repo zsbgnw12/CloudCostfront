@@ -21,7 +21,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
-  accountsApi, azureConsentApi, authApi, suppliersApi,
+  accountsApi, azureConsentApi, authApi, suppliersApi, syncApi,
   type ServiceAccount, type ServiceAccountDetail, type HistoryItem, type SupplySourceItem, type EntityItem,
   type AzureConsentInvite, type AzureConsentStartResponse, type AzureDiscoveredSubscription,
 } from "@/lib/api"
@@ -1220,10 +1220,20 @@ export default function AccountsPage() {
         supply_source_id: selectedGroup.supplySourceId,
         dry_run: false,
       })
+      // dashboard 读的是 billing_daily_summary 预聚合表；清理只动了 billing_summary
+      // 原始表，预聚合还停留在旧的 N× 放大的数字。完成清理后立刻刷一次。
+      let refreshNote = ""
+      try {
+        const rs = await syncApi.refreshSummary()
+        refreshNote = `\n预聚合表已刷新：${rs.refreshed_range ?? rs.reason ?? "ok"}`
+      } catch (e) {
+        refreshNote = `\n⚠ 预聚合刷新失败，请到 /accounts 之外重试或联系运维：${e instanceof Error ? e.message : e}`
+      }
       alert(
         `清理完成：删 ${real.billing_rows_deleted_as_dup} 行重复 billing，` +
         `${real.orphan_data_sources_removed} 个孤儿 DS / ${real.orphan_cloud_accounts_removed} 个孤儿 CA，` +
-        `${real.projects_repointed} 个 Project 重定向到 DS#${real.kept_data_source_id}`,
+        `${real.projects_repointed} 个 Project 重定向到 DS#${real.kept_data_source_id}` +
+        refreshNote,
       )
       await load()
     } catch (e) {
