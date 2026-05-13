@@ -59,6 +59,7 @@ const _LONG_FETCH_PATTERNS = [
   /\/api\/service-accounts\/taiji-from-blob$/,
   /\/api\/service-accounts\/taiji-cleanup-duplicates$/,
   /\/api\/service-accounts\/taiji-ingest-day$/,
+  /\/api\/service-accounts\/azure-sync-subscription-names$/,
   /\/api\/service-accounts\/bulk-/,
   /\/api\/service-accounts\/hard\//,  // 删除大批账号
   /\/api\/sync\/refresh-summary/,  // billing_daily_summary 重算可能 1~5min
@@ -488,6 +489,24 @@ export const accountsApi = {
    * - external_project_id = "<username>:<token_name>"
    * - 已存在的跳过（幂等可重试）
    */
+  /**
+   * Azure 货源专属：从 ARM 拉所有可见订阅的 displayName，更新本地 Project.name。
+   * 按 (tenant_id, client_id) 分组，同一 SP 一次 token + 一次 list；
+   * 与本地 external_project_id (subscription_id) 匹配后更新。
+   * 幂等：重复调不会重复更新。
+   */
+  azureSyncSubscriptionNames: (data: { supply_source_id: number }) =>
+    request<{
+      total_projects: number
+      updated: { project_id: number; subscription_id: string; old_name: string; new_name: string }[]
+      unchanged: number
+      missing: string[]
+      api_errors: string[]
+    }>("/api/service-accounts/azure-sync-subscription-names", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
   /**
    * Taiji 一天的 JSON 快照直接落库（绕过 Blob）。前端读本地文件 → POST 此接口。
    * 共享 CA/DS，幂等（重复上传同一天唯一约束去重）。

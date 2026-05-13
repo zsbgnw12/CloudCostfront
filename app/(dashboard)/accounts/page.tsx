@@ -1398,6 +1398,44 @@ export default function AccountsPage() {
     }
   }, [selectedGroup, load])
 
+  // Azure 同步订阅名称（从 ARM 拉 displayName 更新 Project.name）
+  const [azureSyncSubRunning, setAzureSyncSubRunning] = useState(false)
+  const handleAzureSyncSubscriptionNames = useCallback(async () => {
+    if (!selectedGroup || selectedGroup.provider !== "azure") return
+    setAzureSyncSubRunning(true)
+    try {
+      const r = await accountsApi.azureSyncSubscriptionNames({
+        supply_source_id: selectedGroup.supplySourceId,
+      })
+      const lines: string[] = []
+      lines.push(`Azure 订阅名称同步：${r.total_projects} 个 Azure 服务账号`)
+      lines.push(`  · 已更新名称: ${r.updated.length}`)
+      lines.push(`  · 名称无变化: ${r.unchanged}`)
+      lines.push(`  · ARM 列表未匹配: ${r.missing.length}`)
+      if (r.updated.length > 0) {
+        lines.push("", "更新示例:")
+        for (const u of r.updated.slice(0, 5)) {
+          lines.push(`  - ${u.subscription_id.slice(0, 8)}…  "${u.old_name}"  →  "${u.new_name}"`)
+        }
+        if (r.updated.length > 5) lines.push(`  ... 还有 ${r.updated.length - 5} 个`)
+      }
+      if (r.missing.length > 0) {
+        lines.push("", `未匹配的 subscription_id（前 3 个）:`)
+        for (const m of r.missing.slice(0, 3)) lines.push(`  - ${m}`)
+      }
+      if (r.api_errors.length > 0) {
+        lines.push("", "API 错误:")
+        for (const e of r.api_errors.slice(0, 3)) lines.push(`  - ${e}`)
+      }
+      alert(lines.join("\n"))
+      await load()
+    } catch (e) {
+      alert(`同步失败：${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setAzureSyncSubRunning(false)
+    }
+  }, [selectedGroup, load])
+
   // Taiji 清理重复数据 handler。必须在 load 声明之后定义（deps 引用 load）
   const handleTaijiCleanup = useCallback(async () => {
     if (!selectedGroup || selectedGroup.provider !== "taiji") return
@@ -2861,6 +2899,21 @@ export default function AccountsPage() {
                 {(selectedGroup || isSearching) && (
                   <div className="flex items-center gap-3 mt-2">
                     <p className="text-sm text-muted-foreground">{displayedAccounts.length} 个服务账号{isSearching && ` · 匹配「${searchTrimmed}」`}</p>
+                    {/* Azure 货源 + cloud_admin/ops/cloud_azure：同步订阅名称按钮
+                        从 ARM 拉每个 SP 可见订阅的 displayName，更新本地 Project.name */}
+                    {selectedGroup?.provider === "azure" && canManageEntityProvider("azure") && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 text-xs gap-1"
+                        onClick={handleAzureSyncSubscriptionNames}
+                        disabled={azureSyncSubRunning}
+                        title="调用 Azure ARM API 拉取所有可见订阅的 displayName，更新本地服务账号显示名"
+                      >
+                        {azureSyncSubRunning ? <Loader2 className="w-3 h-3 animate-spin" /> : <Clock className="w-3 h-3" />}
+                        同步订阅名称
+                      </Button>
+                    )}
                     {/* Taiji 货源 + cloud_admin 才显示「清理重复数据」按钮，用于修复
                         历史"每账号一个独立 CA/DS"导致的 billing 行 N× 放大。一次性操作。 */}
                     {selectedGroup?.provider === "taiji" && isCloudAdmin && (
