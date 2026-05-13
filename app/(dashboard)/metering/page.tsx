@@ -343,6 +343,14 @@ export default function MeteringPage() {
               />
             </div>
             <div className="flex items-center gap-1 pb-0.5">
+              <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => {
+                const t = format(today, "yyyy-MM-dd")
+                setDateStart(t); setDateEnd(t); setPage(1)
+              }}>今天</Button>
+              <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => {
+                const y = format(subDays(today, 1), "yyyy-MM-dd")
+                setDateStart(y); setDateEnd(y); setPage(1)
+              }}>昨天</Button>
               <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => quickRange(7)}>近7天</Button>
               <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => quickRange(30)}>近30天</Button>
               <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => { setDateStart(format(startOfMonth(today), "yyyy-MM-dd")); setDateEnd(format(today, "yyyy-MM-dd")); setPage(1) }}>本月</Button>

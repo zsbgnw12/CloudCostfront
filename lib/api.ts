@@ -11,6 +11,8 @@ function getApiBase(): string {
 }
 
 const API_BASE = getApiBase()
+/** 暴露给其他模块直接拼 URL（layout 心跳 raw 检测、SDK 之外的临时 fetch 等） */
+export const API_BASE_URL = API_BASE
 
 function redirectToLogin(force = false) {
   if (typeof window === "undefined") return

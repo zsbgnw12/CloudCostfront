@@ -6,12 +6,12 @@ import { Sidebar } from "@/components/layout/sidebar"
 import { Header } from "@/components/layout/header"
 import { PageTransition } from "@/components/page-transition"
 import { NeonBackdrop } from "@/components/neon-backdrop"
-import { authApi } from "@/lib/api"
+import { API_BASE_URL } from "@/lib/api"
 import { Cloud } from "lucide-react"
 
-// 会话有效性检查频率：每 2 分钟一次。配合 visibilitychange，用户切回标签
-// 时立刻 ping 一次，避免长时间 idle 后 cookie 过期但 UI 不自知。
-const _AUTH_HEARTBEAT_MS = 2 * 60 * 1000
+// 会话有效性检查频率：每 60 秒一次（比之前的 120s 短，发现 cookie 过期更快）。
+// 配合 visibilitychange，用户切回标签时立刻 ping 一次。
+const _AUTH_HEARTBEAT_MS = 60 * 1000
 
 export default function DashboardLayout({
   children,
@@ -26,37 +26,48 @@ export default function DashboardLayout({
     let alive = true
     let heartbeatTimer: ReturnType<typeof setInterval> | null = null
 
-    const checkAuth = async (): Promise<boolean> => {
+    // 用 raw fetch 而不是 authApi.me() —— authApi.me() 会经过 lib/api.ts 的 401
+    // 自动 refresh 逻辑，可能把"真过期"伪装成"还在登录"。这里要的是**真实**
+    // 的会话状态：cookie 没了 / 过期了 → 401 → 立刻强跳，不要 refresh。
+    // 业务 API 调用仍然走 authApi（保留 refresh 滚动续期），不冲突。
+    const rawCheckMe = async () => {
+      if (!alive) return
       try {
-        await authApi.me()
-        return true
-      } catch {
-        // me 失败 = 未登录或 token 过期。lib/api.ts 的 redirectToLogin 已会跳 /login,
-        // 这里 router.replace 兜底（确保跳）。
-        if (alive) {
+        const res = await fetch(`${API_BASE_URL}/api/auth/me`, {
+          method: "GET",
+          credentials: "include",
+          cache: "no-store",
+        })
+        if (!alive) return
+        if (res.status === 401) {
+          // 显式硬跳，绕过 router.replace 可能保留的 React 状态/SWR cache
+          if (typeof window !== "undefined" && window.location.pathname !== "/login") {
+            window.location.replace("/login")
+          }
           setAuthed(false)
-          router.replace("/login")
+          return
         }
-        return false
+        if (res.ok) {
+          setAuthed(true)
+        }
+      } catch {
+        // 网络错误等：下一次心跳再试，不强跳避免误杀
       }
     }
 
     // 首次检查
-    ;(async () => {
-      const ok = await checkAuth()
-      if (alive && ok) setAuthed(true)
-    })()
+    void rawCheckMe()
 
-    // 心跳：每 2 分钟轮询 /api/auth/me，发现 cookie 失效立即跳 /login
+    // 心跳：每 60 秒检查一次 /api/auth/me；401 立即跳 /login
     heartbeatTimer = setInterval(() => {
       if (!alive) return
-      void checkAuth()
+      void rawCheckMe()
     }, _AUTH_HEARTBEAT_MS)
 
     // 用户从其他标签切回 → 立即检查（不用等到下一个心跳）
     const onVisibility = () => {
       if (!alive) return
-      if (document.visibilityState === "visible") void checkAuth()
+      if (document.visibilityState === "visible") void rawCheckMe()
     }
     document.addEventListener("visibilitychange", onVisibility)
 
