@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useMemo, useEffect } from "react"
-import { format, subDays, startOfMonth } from "date-fns"
+import { format, subDays, startOfMonth, endOfMonth, subMonths, startOfQuarter, endOfQuarter, subQuarters } from "date-fns"
 import {
   Activity, Download, ChevronLeft, ChevronRight,
   Database, Layers, Hash,
@@ -346,6 +346,23 @@ export default function MeteringPage() {
               <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => quickRange(7)}>近7天</Button>
               <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => quickRange(30)}>近30天</Button>
               <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => { setDateStart(format(startOfMonth(today), "yyyy-MM-dd")); setDateEnd(format(today, "yyyy-MM-dd")); setPage(1) }}>本月</Button>
+              <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => {
+                const lastM = subMonths(today, 1)
+                setDateStart(format(startOfMonth(lastM), "yyyy-MM-dd"))
+                setDateEnd(format(endOfMonth(lastM), "yyyy-MM-dd"))
+                setPage(1)
+              }}>上个月</Button>
+              <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => {
+                setDateStart(format(startOfQuarter(today), "yyyy-MM-dd"))
+                setDateEnd(format(today, "yyyy-MM-dd"))
+                setPage(1)
+              }}>本季度</Button>
+              <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => {
+                const lastQ = subQuarters(today, 1)
+                setDateStart(format(startOfQuarter(lastQ), "yyyy-MM-dd"))
+                setDateEnd(format(endOfQuarter(lastQ), "yyyy-MM-dd"))
+                setPage(1)
+              }}>上个季度</Button>
             </div>
           </div>
         </CardContent>

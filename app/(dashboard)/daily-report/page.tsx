@@ -18,6 +18,7 @@ import {
 import { accountsApi, billingApi, type DailyReportRow, type CostSummary } from "@/lib/api"
 import { useAccounts, useSuppliers, useSupplySourcesAll } from "@/hooks/use-data"
 import { cn } from "@/lib/utils"
+import { format, startOfMonth, endOfMonth, subMonths, startOfQuarter, endOfQuarter, subQuarters, subDays } from "date-fns"
 import { useChartTheme } from "@/lib/chart-theme"
 
 const PROVIDER_LABELS: Record<string, string> = { aws: "AWS", gcp: "GCP", azure: "Azure", taiji: "Taiji" }
@@ -451,6 +452,54 @@ export default function DailyReportPage() {
             <div className="space-y-1">
               <Label className="text-xs">结束日期</Label>
               <Input type="date" value={dateRange.end} onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })} className="w-40" />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">快捷</Label>
+              <div className="flex items-center gap-1 flex-wrap">
+                {/* 一组快捷预设：覆盖近 N 天 / 本月 / 上个月 / 本季度 / 上个季度 */}
+                <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => {
+                  const today = new Date()
+                  setDateRange({
+                    start: format(subDays(today, 6), "yyyy-MM-dd"),
+                    end: format(today, "yyyy-MM-dd"),
+                  })
+                }}>近7天</Button>
+                <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => {
+                  const today = new Date()
+                  setDateRange({
+                    start: format(subDays(today, 29), "yyyy-MM-dd"),
+                    end: format(today, "yyyy-MM-dd"),
+                  })
+                }}>近30天</Button>
+                <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => {
+                  const today = new Date()
+                  setDateRange({
+                    start: format(startOfMonth(today), "yyyy-MM-dd"),
+                    end: format(today, "yyyy-MM-dd"),
+                  })
+                }}>本月</Button>
+                <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => {
+                  const lastM = subMonths(new Date(), 1)
+                  setDateRange({
+                    start: format(startOfMonth(lastM), "yyyy-MM-dd"),
+                    end: format(endOfMonth(lastM), "yyyy-MM-dd"),
+                  })
+                }}>上个月</Button>
+                <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => {
+                  const today = new Date()
+                  setDateRange({
+                    start: format(startOfQuarter(today), "yyyy-MM-dd"),
+                    end: format(today, "yyyy-MM-dd"),
+                  })
+                }}>本季度</Button>
+                <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => {
+                  const lastQ = subQuarters(new Date(), 1)
+                  setDateRange({
+                    start: format(startOfQuarter(lastQ), "yyyy-MM-dd"),
+                    end: format(endOfQuarter(lastQ), "yyyy-MM-dd"),
+                  })
+                }}>上个季度</Button>
+              </div>
             </div>
             <div className="space-y-1">
               <Label className="text-xs">统一折扣（%）</Label>

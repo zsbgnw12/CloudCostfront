@@ -34,8 +34,10 @@ const MULTI_PROJECT_TYPES = new Set(["monthly_budget_multi", "yearly_budget_mult
 /** 账号总配额告警 — 触发百分比硬编码 90%(后端 alert_service.py 也用同一常量)。 */
 const ACCOUNT_QUOTA_TRIGGER_PCT = 90
 
-/** Select 不接受空字符串作为 value，用哨兵表示"全部主体"。 */
+/** Select 不接受空字符串作为 value，下面是不同维度的"全部"哨兵。 */
 const ENTITY_FILTER_ALL = "__all_entities__"
+const SUPPLY_SOURCE_ALL = "__all_supply_sources__"
+const ACCOUNT_ALL = "__all_accounts__"
 
 const fmt = (v: number) => `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
@@ -188,9 +190,29 @@ export default function AlertsPage() {
         const picked = accounts.filter((a) => form.multi_account_ids.includes(a.id))
         target_type = "project_group"
         target_id = picked.map((a) => a.external_project_id).join(",") || undefined
-      } else {
+      } else if (form.account_id) {
+        // 用户明确选了某个账号
         const account = accounts.find((a) => String(a.id) === form.account_id)
         target_id = account?.external_project_id ?? undefined
+      } else {
+        // 用户未选具体账号 → 用上方"供应商/货源/主体"过滤出的账号集合
+        // 1 个 = 等价单账号；多个 = 单类型告警不支持，提示换多项目类型
+        if (formAccounts.length === 0) {
+          alert("没有匹配的服务账号，请调整供应商 / 货源 / 主体过滤")
+          return
+        }
+        if (formAccounts.length === 1) {
+          target_id = formAccounts[0].external_project_id
+        } else {
+          alert(
+            `当前过滤命中 ${formAccounts.length} 个账号；` +
+            `「${THRESHOLD_LABELS[form.threshold_type] ?? form.threshold_type}」` +
+            "只支持单账号告警。\n\n请：\n" +
+            "1) 在「服务账号」下拉里选具体一个，或\n" +
+            "2) 把告警类型换成「多项目月预算合计」/「多项目年预算合计」"
+          )
+          return
+        }
       }
       const payload = {
         name: form.name,
@@ -324,12 +346,13 @@ export default function AlertsPage() {
                       </SelectContent>
                     </Select>
                     <Select
-                      value={form.supply_source_id}
-                      onValueChange={(v) => setForm({ ...form, supply_source_id: v, entity_id: "", account_id: "" })}
+                      value={form.supply_source_id || SUPPLY_SOURCE_ALL}
+                      onValueChange={(v) => setForm({ ...form, supply_source_id: v === SUPPLY_SOURCE_ALL ? "" : v, entity_id: "", account_id: "" })}
                       disabled={!form.supplier_id}
                     >
                       <SelectTrigger><SelectValue placeholder="货源" /></SelectTrigger>
                       <SelectContent>
+                        <SelectItem value={SUPPLY_SOURCE_ALL}>全部货源</SelectItem>
                         {formSources.map((src) => (
                           <SelectItem key={src.id} value={String(src.id)}>
                             {PROVIDER_LABELS[src.provider] ?? src.provider.toUpperCase()}
@@ -340,7 +363,7 @@ export default function AlertsPage() {
                     <Select
                       value={form.entity_id || ENTITY_FILTER_ALL}
                       onValueChange={(v) => setForm({ ...form, entity_id: v === ENTITY_FILTER_ALL ? "" : v, account_id: "" })}
-                      disabled={!form.supply_source_id}
+                      disabled={!form.supplier_id}
                     >
                       <SelectTrigger><SelectValue placeholder="主体" /></SelectTrigger>
                       <SelectContent>
@@ -351,12 +374,13 @@ export default function AlertsPage() {
                       </SelectContent>
                     </Select>
                     <Select
-                      value={form.account_id}
-                      onValueChange={(v) => setForm({ ...form, account_id: v })}
+                      value={form.account_id || ACCOUNT_ALL}
+                      onValueChange={(v) => setForm({ ...form, account_id: v === ACCOUNT_ALL ? "" : v })}
                       disabled={!form.supplier_id}
                     >
                       <SelectTrigger><SelectValue placeholder="服务账号" /></SelectTrigger>
                       <SelectContent>
+                        <SelectItem value={ACCOUNT_ALL}>全部服务账号 ({formAccounts.length})</SelectItem>
                         {formAccounts.map((a) => (
                           <SelectItem key={a.id} value={String(a.id)}>
                             {a.name}{" "}
@@ -369,6 +393,19 @@ export default function AlertsPage() {
                   {form.threshold_type === "account_lifetime_quota" && (
                     <p className="text-xs text-muted-foreground">
                       该账号生命周期累计费用 ≥ 配额 × {ACCOUNT_QUOTA_TRIGGER_PCT}% 时触发告警(从账号创建到现在的全部费用 SUM)。
+                    </p>
+                  )}
+                  {/* 当未指定具体账号时，提示用户匹配到几个账号；超过 1 时只有多项目类告警可保存 */}
+                  {form.supplier_id && !form.account_id && (
+                    <p className="text-xs text-muted-foreground">
+                      未指定服务账号，将命中{" "}
+                      <span className="text-foreground font-medium">{formAccounts.length}</span>{" "}
+                      个匹配账号（按上方供应商 / 货源 / 主体过滤）。
+                      {formAccounts.length > 1 && (
+                        <span className="ml-1 text-amber-400/80">
+                          请把告警类型换成「多项目月/年预算合计」，或在「服务账号」里选具体一个。
+                        </span>
+                      )}
                     </p>
                   )}
                 </div>
@@ -421,7 +458,12 @@ export default function AlertsPage() {
               actionLoading === "save" ||
               (MULTI_PROJECT_TYPES.has(form.threshold_type)
                 ? form.multi_account_ids.length === 0
-                : !form.account_id)
+                : (
+                    !form.supplier_id ||
+                    // 全选(account_id == "")：必须命中至少 1 个账号；
+                    // 命中 >1 时仅多项目类型可用，单类型由 handleSave 二次校验
+                    (!form.account_id && formAccounts.length === 0)
+                  ))
             }>
               {actionLoading === "save" && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}{editingId === null ? "添加" : "保存"}
             </Button></DialogFooter>
