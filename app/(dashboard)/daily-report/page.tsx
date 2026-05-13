@@ -73,6 +73,8 @@ export default function DailyReportPage() {
   const [supplySourceId, setSupplySourceId] = useState("__all__")
   /** 服务账号多选：空数组 = 不限（按上游货源/供应商范围） */
   const [accountIds, setAccountIds] = useState<number[]>([])
+  /** Taiji 货源专属：用户(username) 筛选；"__all__" = 全部用户 */
+  const [taijiUsername, setTaijiUsername] = useState<string>("__all__")
   const [loading, setLoading] = useState(false)
   /** 草稿字符串：允许空串、中间态，避免受控 number 一删就回 0 */
   const [discountInput, setDiscountInput] = useState("0")
@@ -121,7 +123,39 @@ export default function DailyReportPage() {
 
   useEffect(() => {
     setAccountIds([])
+    setTaijiUsername("__all__")
   }, [supplySourceId])
+
+  useEffect(() => {
+    // 切用户清空下游账号选择，避免残留
+    setAccountIds([])
+  }, [taijiUsername])
+
+  /** 当前选中货源是否 Taiji */
+  const selectedSourceIsTaiji = useMemo(() => {
+    if (supplySourceId === "__all__") return false
+    return sources.find((s) => String(s.id) === supplySourceId)?.provider === "taiji"
+  }, [supplySourceId, sources])
+
+  /** 从 external_project_id "user:token" 取 username */
+  const _taijiUsernameOf = (extId: string | null | undefined): string => {
+    if (!extId) return ""
+    const i = extId.indexOf(":")
+    return i < 0 ? extId : extId.slice(0, i)
+  }
+
+  /** 当前 Taiji 货源下出现的所有用户名 */
+  const taijiUsernameOptions = useMemo(() => {
+    if (!selectedSourceIsTaiji) return [] as string[]
+    const ssid = Number(supplySourceId)
+    const set = new Set<string>()
+    for (const a of accounts) {
+      if (a.supply_source_id !== ssid) continue
+      const u = _taijiUsernameOf(a.external_project_id)
+      if (u) set.add(u)
+    }
+    return Array.from(set).sort((x, y) => x.localeCompare(y, "zh-CN"))
+  }, [accounts, supplySourceId, selectedSourceIsTaiji])
 
   const sourcesInScope = useMemo(() => {
     if (supplierId === "__all__") return sources
@@ -136,9 +170,13 @@ export default function DailyReportPage() {
         if (!allowed.has(a.supply_source_id)) return false
       }
       if (supplySourceId !== "__all__" && a.supply_source_id !== Number(supplySourceId)) return false
+      // Taiji 用户筛选：external_project_id 前缀过滤
+      if (selectedSourceIsTaiji && taijiUsername !== "__all__") {
+        if (_taijiUsernameOf(a.external_project_id) !== taijiUsername) return false
+      }
       return true
     })
-  }, [accounts, supplierId, supplySourceId, sourcesInScope])
+  }, [accounts, supplierId, supplySourceId, sourcesInScope, selectedSourceIsTaiji, taijiUsername])
 
   const chartScopeLabel = useMemo(() => {
     if (supplySourceId !== "__all__") {
@@ -428,6 +466,25 @@ export default function DailyReportPage() {
                 </SelectContent>
               </Select>
             </div>
+            {/* Taiji 货源专属：用户筛选（在货源和服务账号中间） */}
+            {selectedSourceIsTaiji && (
+              <div className="space-y-1">
+                <Label className="text-xs">用户</Label>
+                <Select
+                  value={taijiUsername}
+                  onValueChange={(v) => setTaijiUsername(v)}
+                  disabled={taijiUsernameOptions.length === 0}
+                >
+                  <SelectTrigger className="w-44"><SelectValue placeholder="全部用户" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__all__">全部用户 ({taijiUsernameOptions.length})</SelectItem>
+                    {taijiUsernameOptions.map((u) => (
+                      <SelectItem key={u} value={u}>{u}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <div className="space-y-1">
               <Label className="text-xs">服务账号</Label>
               <MultiSelect

@@ -89,6 +89,8 @@ export default function MeteringPage() {
   const [dateEnd, setDateEnd] = useState(format(today, "yyyy-MM-dd"))
   const [supplierId, setSupplierId] = useState("__all__")
   const [supplySourceId, setSupplySourceId] = useState("__all__")
+  /** Taiji 货源专属：用户(username) 筛选；"__all__" = 全部用户 */
+  const [taijiUsername, setTaijiUsername] = useState<string>("__all__")
   /** 服务账号多选：空数组 = 不限（按上游供应商/货源范围） */
   const [accountIds, setAccountIds] = useState<number[]>([])
   /** 服务多选：空数组 = 不限 */
@@ -106,8 +108,29 @@ export default function MeteringPage() {
   useEffect(() => {
     setAccountIds([])
     setSelectedProducts([])
+    setTaijiUsername("__all__")
     setPage(1)
   }, [supplySourceId])
+
+  useEffect(() => {
+    // 切用户重置下游账号 + 服务，避免选了 A 用户的账号后切到 B 用户还残留
+    setAccountIds([])
+    setSelectedProducts([])
+    setPage(1)
+  }, [taijiUsername])
+
+  /** 当前选中货源是否 Taiji（决定要不要显示用户筛选） */
+  const selectedSourceIsTaiji = useMemo(() => {
+    if (supplySourceId === "__all__") return false
+    return sources.find((s) => String(s.id) === supplySourceId)?.provider === "taiji"
+  }, [supplySourceId, sources])
+
+  /** 从 external_project_id "user:token" 取 username */
+  const _taijiUsernameOf = (extId: string | null | undefined): string => {
+    if (!extId) return ""
+    const i = extId.indexOf(":")
+    return i < 0 ? extId : extId.slice(0, i)
+  }
 
   const sourcesInScope = useMemo(() => {
     if (supplierId === "__all__") return sources
@@ -132,9 +155,26 @@ export default function MeteringPage() {
         if (!allowed.has(a.supply_source_id)) return false
       }
       if (supplySourceId !== "__all__" && a.supply_source_id !== Number(supplySourceId)) return false
+      // Taiji 货源 + 选中具体用户 → 用 external_project_id 前缀过滤
+      if (selectedSourceIsTaiji && taijiUsername !== "__all__") {
+        if (_taijiUsernameOf(a.external_project_id) !== taijiUsername) return false
+      }
       return true
     })
-  }, [accounts, supplierId, supplySourceId, sourcesInScope])
+  }, [accounts, supplierId, supplySourceId, sourcesInScope, selectedSourceIsTaiji, taijiUsername])
+
+  /** Taiji 当前货源下出现的所有用户名（去重 + 排序）；仅 Taiji 选中时计算 */
+  const taijiUsernameOptions = useMemo(() => {
+    if (!selectedSourceIsTaiji) return [] as string[]
+    const ssid = Number(supplySourceId)
+    const set = new Set<string>()
+    for (const a of accounts) {
+      if (a.supply_source_id !== ssid) continue
+      const u = _taijiUsernameOf(a.external_project_id)
+      if (u) set.add(u)
+    }
+    return Array.from(set).sort((x, y) => x.localeCompare(y, "zh-CN"))
+  }, [accounts, supplySourceId, selectedSourceIsTaiji])
 
   const supplierNameForApi = useMemo(() => {
     if (supplierId === "__all__") return undefined
@@ -148,17 +188,27 @@ export default function MeteringPage() {
     return undefined
   }, [supplySourceId, sources])
 
+  /** Taiji 选了具体用户但未明确勾账号时，把该用户下所有账号 id 拼进 account_ids，
+   *  以便后端 metering API 准确过滤（backend 没 username 维度，只认 account_ids）。 */
+  const effectiveAccountIds = useMemo(() => {
+    if (accountIds.length > 0) return accountIds
+    if (selectedSourceIsTaiji && taijiUsername !== "__all__") {
+      return filteredAccounts.map((a) => a.id)
+    }
+    return [] as number[]
+  }, [accountIds, selectedSourceIsTaiji, taijiUsername, filteredAccounts])
+
   const scopeExtra = useMemo(
     () => ({
-      account_ids: accountIds.length > 0 ? accountIds : undefined,
+      account_ids: effectiveAccountIds.length > 0 ? effectiveAccountIds : undefined,
       supply_source_id:
-        accountIds.length === 0 && supplySourceId !== "__all__" ? Number(supplySourceId) : undefined,
+        effectiveAccountIds.length === 0 && supplySourceId !== "__all__" ? Number(supplySourceId) : undefined,
       supplier_name:
-        accountIds.length === 0 && supplySourceId === "__all__" && supplierId !== "__all__"
+        effectiveAccountIds.length === 0 && supplySourceId === "__all__" && supplierId !== "__all__"
           ? supplierNameForApi
           : undefined,
     }),
-    [accountIds, supplySourceId, supplierId, supplierNameForApi],
+    [effectiveAccountIds, supplySourceId, supplierId, supplierNameForApi],
   )
 
   const filters = useMemo(
@@ -303,6 +353,25 @@ export default function MeteringPage() {
                 </SelectContent>
               </Select>
             </div>
+            {/* Taiji 货源专属：用户筛选（在货源和服务账号中间） */}
+            {selectedSourceIsTaiji && (
+              <div className="space-y-1.5">
+                <Label className="text-xs">用户</Label>
+                <Select
+                  value={taijiUsername}
+                  onValueChange={(v) => setTaijiUsername(v)}
+                  disabled={taijiUsernameOptions.length === 0}
+                >
+                  <SelectTrigger className="h-8 w-44 text-sm"><SelectValue placeholder="全部用户" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__all__">全部用户 ({taijiUsernameOptions.length})</SelectItem>
+                    {taijiUsernameOptions.map((u) => (
+                      <SelectItem key={u} value={u}>{u}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <div className="space-y-1.5 min-w-[220px]">
               <Label className="text-xs">服务账号</Label>
               <MultiSelect
