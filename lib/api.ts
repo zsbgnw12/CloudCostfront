@@ -56,6 +56,7 @@ const _DEFAULT_FETCH_TIMEOUT_MS = 30_000
 const _LONG_FETCH_PATTERNS = [
   /\/api\/service-accounts\/taiji-from-blob$/,
   /\/api\/service-accounts\/taiji-cleanup-duplicates$/,
+  /\/api\/service-accounts\/taiji-ingest-day$/,
   /\/api\/service-accounts\/bulk-/,
   /\/api\/service-accounts\/hard\//,  // 删除大批账号
   /\/api\/sync\/refresh-summary/,  // billing_daily_summary 重算可能 1~5min
@@ -485,6 +486,25 @@ export const accountsApi = {
    * - external_project_id = "<username>:<token_name>"
    * - 已存在的跳过（幂等可重试）
    */
+  /**
+   * Taiji 一天的 JSON 快照直接落库（绕过 Blob）。前端读本地文件 → POST 此接口。
+   * 共享 CA/DS，幂等（重复上传同一天唯一约束去重）。
+   * 全月上传后前端应再调一次 syncApi.refreshSummary() 刷预聚合。
+   */
+  taijiIngestDay: (data: {
+    supply_source_id: number
+    snapshot_json: Record<string, unknown>
+  }) =>
+    request<{
+      snapshot_date: string
+      projects_created: number
+      projects_existing: number
+      billing_rows_inserted: number
+    }>("/api/service-accounts/taiji-ingest-day", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
   taijiFromBlob: (data: {
     supply_source_id: number
     entity_id?: number | null

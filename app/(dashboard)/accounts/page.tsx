@@ -1066,6 +1066,10 @@ export default function AccountsPage() {
   // Taiji 按月份同步（一次性操作触发 backend collector 按日拉 blob）
   const [taijiSyncRunning, setTaijiSyncRunning] = useState(false)
   const [taijiSyncStatus, setTaijiSyncStatus] = useState<string>("")
+  // Taiji 文件上传直传（绕过 blob，前端读 JSON 文件 → POST /taiji-ingest-day）
+  const [taijiUploadRunning, setTaijiUploadRunning] = useState(false)
+  const [taijiUploadStatus, setTaijiUploadStatus] = useState<string>("")
+  const taijiFileInputRef = useRef<HTMLInputElement>(null)
 
   /** 当前用户能否管理某 provider 下的主体（增/改/删）。
    *  - admin/ops (visibleProviders === null) → 任意 provider
@@ -1283,6 +1287,64 @@ export default function AccountsPage() {
       alert(`触发同步失败：${e instanceof Error ? e.message : String(e)}`)
     } finally {
       setTaijiSyncRunning(false)
+    }
+  }, [selectedGroup, load])
+
+  // Taiji 文件直传 handler：用户选多个本地 JSON 文件 → 逐个 POST /taiji-ingest-day
+  // → 最后调一次 refresh-summary 刷预聚合。完全绕过 Blob。
+  const handleTaijiFileUpload = useCallback(async (files: FileList | null) => {
+    if (!files || files.length === 0) return
+    if (!selectedGroup || selectedGroup.provider !== "taiji") return
+    setTaijiUploadRunning(true)
+    setTaijiUploadStatus(`reading ${files.length} files...`)
+    const fileArr = Array.from(files)
+    let totalProjCreated = 0
+    let totalRowsTried = 0
+    const failed: string[] = []
+    try {
+      for (let i = 0; i < fileArr.length; i++) {
+        const f = fileArr[i]
+        setTaijiUploadStatus(`${i + 1}/${fileArr.length} ${f.name}`)
+        try {
+          const txt = await f.text()
+          const json = JSON.parse(txt) as Record<string, unknown>
+          const r = await accountsApi.taijiIngestDay({
+            supply_source_id: selectedGroup.supplySourceId,
+            snapshot_json: json,
+          })
+          totalProjCreated += r.projects_created
+          totalRowsTried += r.billing_rows_inserted
+        } catch (e) {
+          failed.push(`${f.name}: ${e instanceof Error ? e.message : String(e)}`)
+        }
+      }
+      // 全部入库后刷一次预聚合
+      setTaijiUploadStatus("refreshing summary...")
+      let refreshNote = ""
+      try {
+        const rs = await syncApi.refreshSummary()
+        refreshNote = `\n预聚合已刷新: ${rs.refreshed_range ?? rs.reason ?? "ok"}`
+      } catch (e) {
+        refreshNote = `\n⚠ 预聚合刷新失败: ${e instanceof Error ? e.message : e}`
+      }
+      const okCnt = fileArr.length - failed.length
+      const lines = [
+        `Taiji 直传完成：成功 ${okCnt} / ${fileArr.length} 天`,
+        `新建账号: ${totalProjCreated}`,
+        `billing 行尝试写入: ${totalRowsTried}（ON CONFLICT 自动跳重）`,
+        refreshNote,
+      ]
+      if (failed.length > 0) {
+        lines.push("", "失败文件:")
+        for (const f of failed.slice(0, 5)) lines.push(`  - ${f}`)
+        if (failed.length > 5) lines.push(`  ... 还有 ${failed.length - 5} 个失败`)
+      }
+      alert(lines.join("\n"))
+      await load()
+    } finally {
+      setTaijiUploadRunning(false)
+      setTaijiUploadStatus("")
+      if (taijiFileInputRef.current) taijiFileInputRef.current.value = ""
     }
   }, [selectedGroup, load])
 
@@ -2724,12 +2786,34 @@ export default function AccountsPage() {
                         历史"每账号一个独立 CA/DS"导致的 billing 行 N× 放大。一次性操作。 */}
                     {selectedGroup?.provider === "taiji" && isCloudAdmin && (
                       <>
+                        <input
+                          ref={taijiFileInputRef}
+                          type="file"
+                          accept=".json,application/json"
+                          multiple
+                          className="hidden"
+                          onChange={(e) => handleTaijiFileUpload(e.target.files)}
+                        />
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-xs gap-1"
+                          onClick={() => taijiFileInputRef.current?.click()}
+                          disabled={taijiUploadRunning || taijiSyncRunning || taijiCleanupRunning}
+                          title="直接选本地 30 个日快照 JSON 文件，浏览器读完逐个 POST 入库；完全绕过 Azure Blob"
+                        >
+                          {taijiUploadRunning ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+                          直传 JSON
+                          {taijiUploadRunning && taijiUploadStatus && (
+                            <span className="ml-1 text-[10px] text-muted-foreground">· {taijiUploadStatus}</span>
+                          )}
+                        </Button>
                         <Button
                           size="sm"
                           variant="outline"
                           className="h-7 text-xs gap-1"
                           onClick={handleTaijiSyncMonth}
-                          disabled={taijiSyncRunning || taijiCleanupRunning}
+                          disabled={taijiSyncRunning || taijiCleanupRunning || taijiUploadRunning}
                           title="按 YYYY-MM 月份触发后台 collector 同步该月份的所有日快照（默认 2026-04，可改）"
                         >
                           {taijiSyncRunning ? <Loader2 className="w-3 h-3 animate-spin" /> : <Clock className="w-3 h-3" />}
@@ -2743,7 +2827,7 @@ export default function AccountsPage() {
                           variant="outline"
                           className="h-7 text-xs gap-1"
                           onClick={handleTaijiCleanup}
-                          disabled={taijiCleanupRunning || taijiSyncRunning}
+                          disabled={taijiCleanupRunning || taijiSyncRunning || taijiUploadRunning}
                           title="把每账号独立 CA/DS 合并为 supply_source 级共享 CA/DS，去重 billing 行（修复历史数据被 N× 放大）"
                         >
                           {taijiCleanupRunning ? <Loader2 className="w-3 h-3 animate-spin" /> : <AlertTriangle className="w-3 h-3" />}
