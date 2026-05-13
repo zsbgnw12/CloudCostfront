@@ -9,6 +9,10 @@ import { NeonBackdrop } from "@/components/neon-backdrop"
 import { authApi } from "@/lib/api"
 import { Cloud } from "lucide-react"
 
+// 会话有效性检查频率：每 2 分钟一次。配合 visibilitychange，用户切回标签
+// 时立刻 ping 一次，避免长时间 idle 后 cookie 过期但 UI 不自知。
+const _AUTH_HEARTBEAT_MS = 2 * 60 * 1000
+
 export default function DashboardLayout({
   children,
 }: {
@@ -20,20 +24,47 @@ export default function DashboardLayout({
 
   useEffect(() => {
     let alive = true
-    ;(async () => {
+    let heartbeatTimer: ReturnType<typeof setInterval> | null = null
+
+    const checkAuth = async (): Promise<boolean> => {
       try {
         await authApi.me()
-        if (alive) setAuthed(true)
+        return true
       } catch {
         // me 失败 = 未登录或 token 过期。lib/api.ts 的 redirectToLogin 已会跳 /login,
-        // 这里也直接 router.replace 兜底(避免某些情况下 me 失败但没自动跳)
+        // 这里 router.replace 兜底（确保跳）。
         if (alive) {
           setAuthed(false)
           router.replace("/login")
         }
+        return false
       }
+    }
+
+    // 首次检查
+    ;(async () => {
+      const ok = await checkAuth()
+      if (alive && ok) setAuthed(true)
     })()
-    return () => { alive = false }
+
+    // 心跳：每 2 分钟轮询 /api/auth/me，发现 cookie 失效立即跳 /login
+    heartbeatTimer = setInterval(() => {
+      if (!alive) return
+      void checkAuth()
+    }, _AUTH_HEARTBEAT_MS)
+
+    // 用户从其他标签切回 → 立即检查（不用等到下一个心跳）
+    const onVisibility = () => {
+      if (!alive) return
+      if (document.visibilityState === "visible") void checkAuth()
+    }
+    document.addEventListener("visibilitychange", onVisibility)
+
+    return () => {
+      alive = false
+      if (heartbeatTimer) clearInterval(heartbeatTimer)
+      document.removeEventListener("visibilitychange", onVisibility)
+    }
   }, [router])
 
   if (authed !== true) {
