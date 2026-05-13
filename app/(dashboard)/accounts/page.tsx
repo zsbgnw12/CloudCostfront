@@ -2160,10 +2160,12 @@ export default function AccountsPage() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-4rem)] gap-0">
+    <div className="flex h-[calc(100vh-4rem)] gap-0 overflow-hidden">
       {/* ─── Left: Tree Panel ─── */}
+      {/* h-full + min-h-0 保证整个 sidebar 严格不超出 flex 父容器；
+          内部 ScrollArea/overflow div 才能正确局部滚动 */}
       <div
-        className="shrink-0 flex flex-col bg-card/50"
+        className="shrink-0 flex flex-col bg-card/50 h-full min-h-0"
         style={{ width: sidebarWidth }}
       >
         <div className="flex items-center justify-between p-4 border-b border-border">
@@ -2390,26 +2392,28 @@ export default function AccountsPage() {
           </Dialog>
           </div>
         </div>
-        <ScrollArea className="flex-1">
-          <div className="p-2">
-            {loading ? <p className="text-sm text-muted-foreground text-center py-8">加载中...</p>
-            : tree.length === 0 ? <p className="text-sm text-muted-foreground text-center py-8">暂无账号</p>
-            : tree.map((node) => (
-                <SupplierNode
-                  key={node.supplierName}
-                  node={node}
-                  selectedGroup={selectedGroup}
-                  onSelectGroup={handleSelectGroup}
-                  onSelectEntity={handleSelectEntity}
-                  onSelectUser={handleSelectUser}
-                  canManageEntityProvider={canManageEntityProvider}
-                  onCreateEntity={openCreateEntity}
-                  onEditEntity={openEditEntity}
-                  onDeleteEntity={handleDeleteEntity}
-                />
-              ))}
-          </div>
-        </ScrollArea>
+        {/* 原生 overflow-y-auto 滚动条 —— shadcn ScrollArea 默认 hover 才显示，
+            用户找货源时不直观；换成浏览器原生滚动条永远可见。
+            flex-1 + min-h-0 是让 flex 子项收缩到 ScrollArea 的关键，
+            否则 ScrollArea 内容会把 sidebar 撑到全高，外层页面跟着滚。 */}
+        <div className="flex-1 min-h-0 overflow-y-auto p-2">
+          {loading ? <p className="text-sm text-muted-foreground text-center py-8">加载中...</p>
+          : tree.length === 0 ? <p className="text-sm text-muted-foreground text-center py-8">暂无账号</p>
+          : tree.map((node) => (
+              <SupplierNode
+                key={node.supplierName}
+                node={node}
+                selectedGroup={selectedGroup}
+                onSelectGroup={handleSelectGroup}
+                onSelectEntity={handleSelectEntity}
+                onSelectUser={handleSelectUser}
+                canManageEntityProvider={canManageEntityProvider}
+                onCreateEntity={openCreateEntity}
+                onEditEntity={openEditEntity}
+                onDeleteEntity={handleDeleteEntity}
+              />
+            ))}
+        </div>
       </div>
 
       {/* 拖拽手柄：替代原 border-r，鼠标 hover 高亮 + 拖动调宽度 */}
