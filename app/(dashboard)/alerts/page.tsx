@@ -38,6 +38,7 @@ const ACCOUNT_QUOTA_TRIGGER_PCT = 90
 const ENTITY_FILTER_ALL = "__all_entities__"
 const SUPPLY_SOURCE_ALL = "__all_supply_sources__"
 const ACCOUNT_ALL = "__all_accounts__"
+const SUPPLIER_FILTER_ALL = "__all_suppliers__"
 
 const fmt = (v: number) => `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
@@ -111,6 +112,19 @@ export default function AlertsPage() {
       return true
     })
   }, [accounts, form.supplier_id, form.supply_source_id, form.entity_id, formSources])
+
+  /** 多项目模式 checkbox 候选池：没选供应商 = 全部账号；选了就走级联过滤(formAccounts)。 */
+  const multiCandidateAccounts = useMemo(() => {
+    if (!form.supplier_id) return accounts
+    return formAccounts
+  }, [form.supplier_id, accounts, formAccounts])
+
+  /** 已勾选但不在当前候选池里的账号数（用于提醒用户筛选改变后存在"看不见的勾"）。 */
+  const multiSelectedOutOfFilter = useMemo(() => {
+    if (form.multi_account_ids.length === 0) return 0
+    const visibleIds = new Set(multiCandidateAccounts.map((a) => a.id))
+    return form.multi_account_ids.filter((id) => !visibleIds.has(id)).length
+  }, [form.multi_account_ids, multiCandidateAccounts])
 
   const resetForm = () =>
     setForm({
@@ -284,14 +298,68 @@ export default function AlertsPage() {
               <div className="space-y-2"><Label>规则名称</Label><Input placeholder="如：账号A日费用超限" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
 
               {MULTI_PROJECT_TYPES.has(form.threshold_type) ? (
-                /* 多项目模式:勾选多个账号(可跨供应商)。每行带主体名便于辨别。 */
+                /* 多项目模式：先用 供应商/货源/主体 级联过滤候选池，再勾选具体账号。 */
                 <div className="space-y-2">
                   <Label>服务账号(多选)</Label>
+                  {/* 级联过滤：与单账号分支同一套 form 字段；不选 = 全部 */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <Select
+                      value={form.supplier_id || SUPPLIER_FILTER_ALL}
+                      onValueChange={(v) => setForm({
+                        ...form,
+                        supplier_id: v === SUPPLIER_FILTER_ALL ? "" : v,
+                        supply_source_id: "",
+                        entity_id: "",
+                      })}
+                    >
+                      <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="供应商" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={SUPPLIER_FILTER_ALL}>全部供应商</SelectItem>
+                        {[...suppliers].sort((a, b) => a.name.localeCompare(b.name)).map((s) => (
+                          <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select
+                      value={form.supply_source_id || SUPPLY_SOURCE_ALL}
+                      onValueChange={(v) => setForm({
+                        ...form,
+                        supply_source_id: v === SUPPLY_SOURCE_ALL ? "" : v,
+                        entity_id: "",
+                      })}
+                      disabled={!form.supplier_id}
+                    >
+                      <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="货源" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={SUPPLY_SOURCE_ALL}>全部货源</SelectItem>
+                        {formSources.map((src) => (
+                          <SelectItem key={src.id} value={String(src.id)}>
+                            {PROVIDER_LABELS[src.provider] ?? src.provider.toUpperCase()}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select
+                      value={form.entity_id || ENTITY_FILTER_ALL}
+                      onValueChange={(v) => setForm({ ...form, entity_id: v === ENTITY_FILTER_ALL ? "" : v })}
+                      disabled={!form.supply_source_id}
+                    >
+                      <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="主体" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={ENTITY_FILTER_ALL}>全部主体</SelectItem>
+                        {formEntities.map((ent) => (
+                          <SelectItem key={ent.id} value={String(ent.id)}>{ent.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                   <div className="rounded-md border border-border max-h-56 overflow-y-auto p-2 space-y-1 bg-background/50">
-                    {accounts.length === 0 ? (
-                      <p className="text-xs text-muted-foreground p-2">暂无可选账号</p>
+                    {multiCandidateAccounts.length === 0 ? (
+                      <p className="text-xs text-muted-foreground p-2">
+                        {form.supplier_id ? "当前筛选范围内无可选账号" : "暂无可选账号"}
+                      </p>
                     ) : (
-                      accounts.map((a) => {
+                      multiCandidateAccounts.map((a) => {
                         const checked = form.multi_account_ids.includes(a.id)
                         return (
                           <label
@@ -325,7 +393,13 @@ export default function AlertsPage() {
                     )}
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    已选 <span className="text-foreground font-medium">{form.multi_account_ids.length}</span> 个账号 ·
+                    已选 <span className="text-foreground font-medium">{form.multi_account_ids.length}</span> 个账号
+                    {multiSelectedOutOfFilter > 0 && (
+                      <span className="ml-1 text-amber-400/80">
+                        (含筛选外 {multiSelectedOutOfFilter} 个)
+                      </span>
+                    )}
+                    {" · "}
                     {form.threshold_type === "yearly_budget_multi"
                       ? "本年这些账号的费用合计 ≥ 阈值时触发告警。"
                       : "本月这些账号的费用合计 ≥ 阈值时触发告警。"}
