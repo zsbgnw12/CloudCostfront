@@ -353,6 +353,64 @@ export default function AlertsPage() {
                       </SelectContent>
                     </Select>
                   </div>
+                  {/* 全选 / 反选 / 清空 工具栏：作用于当前候选池（受上方筛选过滤后的列表） */}
+                  {multiCandidateAccounts.length > 0 && (() => {
+                    const visibleIds = multiCandidateAccounts.map((a) => a.id)
+                    const visibleSet = new Set(visibleIds)
+                    const visibleCheckedCount = form.multi_account_ids.filter((id) => visibleSet.has(id)).length
+                    const allVisibleChecked = visibleCheckedCount === visibleIds.length
+                    return (
+                      <div className="flex items-center gap-2 text-xs">
+                        <button
+                          type="button"
+                          className="px-2 py-0.5 rounded border border-border hover:bg-accent text-muted-foreground hover:text-foreground"
+                          onClick={() => {
+                            // 当前可见全选：把可见 id 合并进已选（保留筛选外的已选）
+                            setForm((f) => ({
+                              ...f,
+                              multi_account_ids: Array.from(new Set([...f.multi_account_ids, ...visibleIds])),
+                            }))
+                          }}
+                          disabled={allVisibleChecked}
+                        >
+                          全选当前 ({visibleIds.length})
+                        </button>
+                        <button
+                          type="button"
+                          className="px-2 py-0.5 rounded border border-border hover:bg-accent text-muted-foreground hover:text-foreground"
+                          onClick={() => {
+                            // 反选当前可见：可见已选→取消、可见未选→选上；筛选外不动
+                            setForm((f) => {
+                              const set = new Set(f.multi_account_ids)
+                              for (const id of visibleIds) {
+                                if (set.has(id)) set.delete(id); else set.add(id)
+                              }
+                              return { ...f, multi_account_ids: Array.from(set) }
+                            })
+                          }}
+                        >
+                          反选当前
+                        </button>
+                        <button
+                          type="button"
+                          className="px-2 py-0.5 rounded border border-border hover:bg-accent text-muted-foreground hover:text-foreground"
+                          onClick={() => {
+                            // 取消当前可见所有勾选；筛选外的已选保留
+                            setForm((f) => ({
+                              ...f,
+                              multi_account_ids: f.multi_account_ids.filter((id) => !visibleSet.has(id)),
+                            }))
+                          }}
+                          disabled={visibleCheckedCount === 0}
+                        >
+                          清空当前
+                        </button>
+                        <span className="text-muted-foreground ml-auto">
+                          可见 {visibleIds.length} · 已勾 {visibleCheckedCount}
+                        </span>
+                      </div>
+                    )
+                  })()}
                   <div className="rounded-md border border-border max-h-56 overflow-y-auto p-2 space-y-1 bg-background/50">
                     {multiCandidateAccounts.length === 0 ? (
                       <p className="text-xs text-muted-foreground p-2">
@@ -407,12 +465,14 @@ export default function AlertsPage() {
                 </div>
               ) : (
                 <div className="space-y-2"><Label>服务账号</Label>
-                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+                  {/* 小/中屏 2 列、大屏 4 列；min-w-0 让 SelectTrigger 内部 SelectValue
+                      能正确 truncate，避免长主体名挤压相邻"服务账号" Select */}
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 [&>*]:min-w-0">
                     <Select
                       value={form.supplier_id}
                       onValueChange={(v) => setForm({ ...form, supplier_id: v, supply_source_id: "", entity_id: "", account_id: "" })}
                     >
-                      <SelectTrigger><SelectValue placeholder="供应商" /></SelectTrigger>
+                      <SelectTrigger className="w-full"><SelectValue placeholder="供应商" /></SelectTrigger>
                       <SelectContent>
                         {[...suppliers].sort((a, b) => a.name.localeCompare(b.name)).map((s) => (
                           <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
@@ -424,7 +484,7 @@ export default function AlertsPage() {
                       onValueChange={(v) => setForm({ ...form, supply_source_id: v === SUPPLY_SOURCE_ALL ? "" : v, entity_id: "", account_id: "" })}
                       disabled={!form.supplier_id}
                     >
-                      <SelectTrigger><SelectValue placeholder="货源" /></SelectTrigger>
+                      <SelectTrigger className="w-full"><SelectValue placeholder="货源" /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value={SUPPLY_SOURCE_ALL}>全部货源</SelectItem>
                         {formSources.map((src) => (
@@ -439,7 +499,7 @@ export default function AlertsPage() {
                       onValueChange={(v) => setForm({ ...form, entity_id: v === ENTITY_FILTER_ALL ? "" : v, account_id: "" })}
                       disabled={!form.supplier_id}
                     >
-                      <SelectTrigger><SelectValue placeholder="主体" /></SelectTrigger>
+                      <SelectTrigger className="w-full"><SelectValue placeholder="主体" /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value={ENTITY_FILTER_ALL}>全部主体</SelectItem>
                         {formEntities.map((ent) => (
@@ -452,7 +512,7 @@ export default function AlertsPage() {
                       onValueChange={(v) => setForm({ ...form, account_id: v === ACCOUNT_ALL ? "" : v })}
                       disabled={!form.supplier_id}
                     >
-                      <SelectTrigger><SelectValue placeholder="服务账号" /></SelectTrigger>
+                      <SelectTrigger className="w-full"><SelectValue placeholder="服务账号" /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value={ACCOUNT_ALL}>全部服务账号 ({formAccounts.length})</SelectItem>
                         {formAccounts.map((a) => (
