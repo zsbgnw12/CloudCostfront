@@ -26,10 +26,11 @@ const THRESHOLD_LABELS: Record<string, string> = {
   account_lifetime_quota: "账号总配额(达 90% 触发)",
   monthly_budget_multi: "多项目月预算合计",
   yearly_budget_multi: "多项目年预算合计",
+  custom_period_budget_multi: "自定义时间段多项目预算合计",
 }
 
 /** 多 project 类型的 threshold_type 集合(同一个判断点用)。 */
-const MULTI_PROJECT_TYPES = new Set(["monthly_budget_multi", "yearly_budget_multi"])
+const MULTI_PROJECT_TYPES = new Set(["monthly_budget_multi", "yearly_budget_multi", "custom_period_budget_multi"])
 
 /** 账号总配额告警 — 触发百分比硬编码 90%(后端 alert_service.py 也用同一常量)。 */
 const ACCOUNT_QUOTA_TRIGGER_PCT = 90
@@ -63,8 +64,11 @@ export default function AlertsPage() {
     threshold_value: "",
     notify_webhook: "",
     notify_email: "",
-    // monthly_budget_multi / yearly_budget_multi 用：勾选的 project external_project_id 列表
+    // monthly_budget_multi / yearly_budget_multi / custom_period_budget_multi 用：勾选的 project external_project_id 列表
     multi_account_ids: [] as number[],
+    // custom_period_budget_multi 专用：自定义时间段
+    start_date: "",
+    end_date: "",
   })
   const [actionLoading, setActionLoading] = useState<string | null>(null)
 
@@ -138,6 +142,8 @@ export default function AlertsPage() {
       notify_webhook: "",
       notify_email: "",
       multi_account_ids: [],
+      start_date: "",
+      end_date: "",
     })
 
   const selectedAccountName = (targetId: string | null) => {
@@ -172,8 +178,10 @@ export default function AlertsPage() {
       entity_id: "",
       account_id: "",
       multi_account_ids: [] as number[],
+      start_date: rule.start_date ?? "",
+      end_date: rule.end_date ?? "",
     }
-    // 多项目类型(月/年):把逗号分隔的 external_project_id 反查回 account.id 列表
+    // 多项目类型(月/年/自定义):把逗号分隔的 external_project_id 反查回 account.id 列表
     if (MULTI_PROJECT_TYPES.has(rule.threshold_type) && rule.target_id) {
       const ids = rule.target_id.split(",").map((s) => s.trim()).filter(Boolean)
       base.multi_account_ids = accounts
@@ -236,6 +244,8 @@ export default function AlertsPage() {
         threshold_value: Number(form.threshold_value),
         notify_webhook: form.notify_webhook || undefined,
         notify_email: form.notify_email || undefined,
+        start_date: form.start_date || undefined,
+        end_date: form.end_date || undefined,
       }
       if (editingId === null) {
         await alertsApi.createRule(payload)
@@ -557,6 +567,7 @@ export default function AlertsPage() {
                       <SelectItem value="account_lifetime_quota">账号总配额(达 90% 触发)</SelectItem>
                       <SelectItem value="monthly_budget_multi">多项目月预算合计 (USD)</SelectItem>
                       <SelectItem value="yearly_budget_multi">多项目年预算合计 (USD)</SelectItem>
+                      <SelectItem value="custom_period_budget_multi">自定义时间段多项目预算合计 (USD)</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -566,6 +577,7 @@ export default function AlertsPage() {
                     form.threshold_type === "account_lifetime_quota" ? "总配额上限 (USD)" :
                     form.threshold_type === "monthly_budget_multi" ? "月预算合计 (USD)" :
                     form.threshold_type === "yearly_budget_multi" ? "年预算合计 (USD)" :
+                    form.threshold_type === "custom_period_budget_multi" ? "时间段预算合计 (USD)" :
                     "阈值"
                   }</Label>
                   <Input
@@ -576,6 +588,7 @@ export default function AlertsPage() {
                       form.threshold_type === "account_lifetime_quota" ? "如 1000,累计达 900 美元时告警" :
                       form.threshold_type === "monthly_budget_multi" ? "如 40000,4 个 project 合计月预算" :
                       form.threshold_type === "yearly_budget_multi" ? "如 480000,4 个 project 合计年预算" :
+                      form.threshold_type === "custom_period_budget_multi" ? "如 480000,指定时间段内预算合计" :
                       ""
                     }
                     value={form.threshold_value}
@@ -583,6 +596,34 @@ export default function AlertsPage() {
                   />
                 </div>
               </div>
+
+              {/* 自定义时间段选择器 */}
+              {form.threshold_type === "custom_period_budget_multi" && (
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>开始日期</Label>
+                    <Input
+                      type="date"
+                      value={form.start_date}
+                      onChange={(e) => setForm({ ...form, start_date: e.target.value })}
+                      placeholder="YYYY-MM-DD"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>结束日期</Label>
+                    <Input
+                      type="date"
+                      value={form.end_date}
+                      onChange={(e) => setForm({ ...form, end_date: e.target.value })}
+                      placeholder="YYYY-MM-DD"
+                    />
+                  </div>
+                  <p className="col-span-2 text-xs text-muted-foreground">
+                    指定时间段内（包含开始和结束日期），所选项目的费用合计 ≥ 阈值时触发告警。可用于查询历史年份（如 2025 年）的预算数据。
+                  </p>
+                </div>
+              )}
+
               <div className="space-y-2"><Label>通知邮箱（多个用逗号分隔，可选）</Label><Input placeholder="admin@example.com, ops@example.com" value={form.notify_email} onChange={(e) => setForm({ ...form, notify_email: e.target.value })} /></div>
               <div className="space-y-2"><Label>Webhook 通知地址（可选）</Label><Input placeholder="https://..." value={form.notify_webhook} onChange={(e) => setForm({ ...form, notify_webhook: e.target.value })} /></div>
             </div>
@@ -590,6 +631,7 @@ export default function AlertsPage() {
               !form.name ||
               !form.threshold_value ||
               actionLoading === "save" ||
+              (form.threshold_type === "custom_period_budget_multi" && (!form.start_date || !form.end_date)) ||
               (MULTI_PROJECT_TYPES.has(form.threshold_type)
                 ? form.multi_account_ids.length === 0
                 : (
