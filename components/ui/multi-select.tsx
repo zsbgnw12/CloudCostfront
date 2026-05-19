@@ -107,10 +107,12 @@ export function MultiSelect({
             <span className="truncate">{triggerLabel}</span>
             <div className="flex items-center gap-1 shrink-0">
               {value.length > 0 && !disabled && (
-                <X
-                  className="size-3.5 opacity-60 hover:opacity-100"
+                <span
+                  className="inline-flex items-center opacity-60 hover:opacity-100"
                   onClick={clearAll}
-                />
+                >
+                  <X className="size-3.5" />
+                </span>
               )}
               <ChevronsUpDown className="size-3.5 opacity-50" />
             </div>
