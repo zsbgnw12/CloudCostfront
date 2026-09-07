@@ -528,6 +528,20 @@ export const alertsApi = {
 
 // ─── Dashboard API ────────────────────────────────────────────
 
+export interface SyncLogRow {
+  id: number
+  data_source_id: number
+  celery_task_id: string | null
+  start_time: string
+  end_time: string | null
+  status: string | null  // running | success | failed
+  query_start_date: string | null
+  query_end_date: string | null
+  records_fetched: number
+  records_upserted: number
+  error_message: string | null
+}
+
 export const syncApi = {
   lastSync: () => request<{ last_sync: string | null }>("/api/sync/last"),
   triggerAll: (start_month: string, end_month: string, provider?: string) =>
@@ -535,7 +549,20 @@ export const syncApi = {
       method: "POST",
       body: JSON.stringify({ start_month, end_month, provider }),
     }),
+  triggerOne: (dataSourceId: number, start_month: string, end_month: string) =>
+    request<{ task_id: string; status: string }>(`/api/sync/${dataSourceId}`, {
+      method: "POST",
+      body: JSON.stringify({ start_month, end_month }),
+    }),
   status: (taskId: string) => request<{ task_id: string; status: string; result: unknown }>(`/api/sync/status/${taskId}`),
+  logs: (params?: { data_source_id?: number; status?: string; limit?: number }) => {
+    const qs = new URLSearchParams()
+    if (params?.data_source_id != null) qs.set("data_source_id", String(params.data_source_id))
+    if (params?.status) qs.set("status", params.status)
+    if (params?.limit != null) qs.set("limit", String(params.limit))
+    const s = qs.toString()
+    return request<SyncLogRow[]>(`/api/sync/logs${s ? `?${s}` : ""}`)
+  },
 }
 
 export const dashboardApi = {

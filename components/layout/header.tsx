@@ -44,6 +44,8 @@ import { ThemeToggle } from "@/components/theme-toggle"
 interface SyncStatus {
   status: "idle" | "syncing" | "success" | "error"
   lastSync?: string
+  // 真实进度：派发后轮询 /api/sync/logs 得到
+  progress?: { running: number; success: number; failed: number; total: number }
 }
 
 function monthStr(d: Date) {
@@ -117,22 +119,66 @@ export function Header() {
     } catch (e) { alert(`清空失败: ${e instanceof Error ? e.message : e}`) }
   }
 
+  // triggerAll 只是"派发"就返回，后台 Celery 才真正跑。这里派发后轮询 /api/sync/logs，
+  // 只统计"派发之后新产生"的日志(id > baseline)，真实反映"进行中/成功/失败"，跑完才停。
   const runSync = async (startMonth: string, endMonth: string, provider?: string) => {
+    setSyncStatus({ status: "syncing", progress: undefined })
+
+    // 派发前记录当前最大日志 id 作为基线
+    let baselineId = 0
     try {
-      setSyncStatus({ status: "syncing" })
+      const base = await syncApi.logs({ limit: 1 })
+      baselineId = base[0]?.id ?? 0
+    } catch { /* 拿不到基线就当 0，最坏是把已有 running 也算进来 */ }
+
+    try {
       await syncApi.triggerAll(startMonth, endMonth, provider)
-      await loadLastSync()
-      setSyncStatus({ status: "success", lastSync: new Date().toISOString() })
-      setTimeout(() => {
-        setSyncStatus((prev) => ({ ...prev, status: "idle" }))
-      }, 3000)
     } catch (e) {
-      console.error("Sync failed:", e)
-      setSyncStatus((prev) => ({ ...prev, status: "error" }))
-      setTimeout(() => {
-        setSyncStatus((prev) => ({ ...prev, status: "idle" }))
-      }, 3000)
+      console.error("Sync dispatch failed:", e)
+      setSyncStatus({ status: "error" })
+      setTimeout(() => setSyncStatus((prev) => ({ ...prev, status: "idle" })), 4000)
+      return
     }
+
+    const startedAt = Date.now()
+    const TIMEOUT_MS = 20 * 60 * 1000
+
+    const poll = async () => {
+      let logs: Awaited<ReturnType<typeof syncApi.logs>> = []
+      try {
+        logs = await syncApi.logs({ limit: 200 })
+      } catch { /* 轮询偶发失败，下一轮再试 */ }
+
+      const fresh = logs.filter((l) => l.id > baselineId)
+      const running = fresh.filter((l) => l.status === "running").length
+      const success = fresh.filter((l) => l.status === "success").length
+      const failed = fresh.filter((l) => l.status === "failed").length
+      const progress = { running, success, failed, total: fresh.length }
+
+      // 完成：已经出现新日志且没有仍在 running 的
+      if (fresh.length > 0 && running === 0) {
+        await loadLastSync()
+        setSyncStatus({
+          status: failed > 0 ? "error" : "success",
+          lastSync: new Date().toISOString(),
+          progress,
+        })
+        setTimeout(() => setSyncStatus((prev) => ({ ...prev, status: "idle", progress: undefined })), 5000)
+        return
+      }
+
+      // 超时保护：不再转圈，回到 idle（任务可能仍在后台跑）
+      if (Date.now() - startedAt > TIMEOUT_MS) {
+        setSyncStatus((prev) => ({ ...prev, status: "idle" }))
+        return
+      }
+
+      setSyncStatus({ status: "syncing", progress })
+      setTimeout(poll, 5000)
+    }
+
+    // 稍等 2.5s 让 worker 产生 running 日志，再开始轮询
+    setTimeout(poll, 2500)
   }
 
   const handleSync = async (provider?: string) => {
@@ -216,11 +262,17 @@ export function Header() {
               />
               <span className="text-sm">
                 {syncStatus.status === "syncing"
-                  ? "同步中..."
+                  ? syncStatus.progress && syncStatus.progress.total > 0
+                    ? `同步中… 进行中 ${syncStatus.progress.running}／完成 ${syncStatus.progress.success + syncStatus.progress.failed}/${syncStatus.progress.total}`
+                    : "同步中…（派发中）"
                   : syncStatus.status === "success"
-                  ? "同步完成"
+                  ? syncStatus.progress
+                    ? `同步完成 ${syncStatus.progress.success}/${syncStatus.progress.total}`
+                    : "同步完成"
                   : syncStatus.status === "error"
-                  ? "同步失败"
+                  ? syncStatus.progress
+                    ? `同步完成，${syncStatus.progress.failed} 个失败`
+                    : "同步失败"
                   : syncStatus.lastSync
                   ? `上次同步: ${timeAgo(syncStatus.lastSync)}`
                   : "未同步"}
