@@ -1232,8 +1232,34 @@ export interface DataSourceRow {
   created_at: string
 }
 
+export interface GcpViewSpec {
+  project_id: string
+  dataset: string
+  table: string
+  cloud_account_id?: number  // 不传后端自动选唯一 GCP 云账号
+}
+
+export interface GcpViewVerifyResult {
+  ok: boolean
+  rows: number
+  projects: { project_id: string; project_name: string; cost: number; rows: number; min_date: string; max_date: string }[]
+  window: string
+  note?: string
+  error?: string
+}
+
 export const dataSourcesApi = {
   list: () => request<DataSourceRow[]>("/api/data-sources/"),
+  verifyGcpView: (spec: GcpViewSpec) =>
+    request<GcpViewVerifyResult>("/api/data-sources/gcp-view/verify", {
+      method: "POST",
+      body: JSON.stringify(spec),
+    }),
+  createGcpView: (spec: GcpViewSpec & { name: string; category_id?: number }) =>
+    request<DataSourceRow>("/api/data-sources/gcp-view", {
+      method: "POST",
+      body: JSON.stringify(spec),
+    }),
 }
 
 export const meteringApi = {

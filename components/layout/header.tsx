@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react"
 import {
   Search, Bell, RefreshCw, Check, AlertTriangle, Info, Loader2, ChevronDown, LogOut,
-  MailPlus, CheckCircle2, Ban, Clock,
+  MailPlus, CheckCircle2, Ban, Clock, Plus,
 } from "lucide-react"
 import useSWR from "swr"
 import { Button } from "@/components/ui/button"
@@ -35,8 +35,8 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 import {
-  alertsApi, accountsApi, syncApi, authApi, azureConsentApi,
-  type AzureConsentInvite, type AzureVerifyResult,
+  alertsApi, accountsApi, syncApi, authApi, azureConsentApi, dataSourcesApi,
+  type AzureConsentInvite, type AzureVerifyResult, type GcpViewVerifyResult,
 } from "@/lib/api"
 import { useUnreadCount, useNotifications } from "@/hooks/use-data"
 import { ThemeToggle } from "@/components/theme-toggle"
@@ -217,6 +217,96 @@ export function Header() {
     finally { setDiscoverLoading(false) }
   }
 
+  // ── 接入 GCP 账单视图弹窗 ──────────────────────────────
+  const [gcpViewOpen, setGcpViewOpen] = useState(false)
+  const [gvName, setGvName] = useState("")
+  const [gvProject, setGvProject] = useState("")
+  const [gvDataset, setGvDataset] = useState("")
+  const [gvTable, setGvTable] = useState("")
+  const [gvVerifying, setGvVerifying] = useState(false)
+  const [gvSaving, setGvSaving] = useState(false)
+  const [gvResult, setGvResult] = useState<GcpViewVerifyResult | null>(null)
+
+  const gvSpec = () => ({
+    project_id: gvProject.trim(),
+    dataset: gvDataset.trim(),
+    table: gvTable.trim(),
+  })
+  const gvFilled = gvProject.trim() && gvDataset.trim() && gvTable.trim()
+
+  const resetGcpView = () => {
+    setGvName(""); setGvProject(""); setGvDataset(""); setGvTable("")
+    setGvResult(null); setGvVerifying(false); setGvSaving(false)
+  }
+
+  const handleGvVerify = async () => {
+    if (!gvFilled) return
+    setGvVerifying(true)
+    setGvResult(null)
+    try {
+      const r = await dataSourcesApi.verifyGcpView(gvSpec())
+      setGvResult(r)
+    } catch (e) {
+      setGvResult({ ok: false, rows: 0, projects: [], window: "", error: e instanceof Error ? e.message : String(e) })
+    } finally {
+      setGvVerifying(false)
+    }
+  }
+
+  const handleGvSave = async () => {
+    if (!gvFilled || !gvName.trim()) return
+    setGvSaving(true)
+    try {
+      const ds = await dataSourcesApi.createGcpView({ ...gvSpec(), name: gvName.trim() })
+      // 建成后立即同步当月，复用顶栏进度显示
+      const m = monthStr(new Date())
+      setGcpViewOpen(false)
+      resetGcpView()
+      await runSyncOne(ds.id, m)
+    } catch (e) {
+      alert(`保存失败: ${e instanceof Error ? e.message : e}`)
+      setGvSaving(false)
+    }
+  }
+
+  // 对单个数据源同步 + 轮询进度（与 runSync 同样的进度显示）
+  const runSyncOne = async (dataSourceId: number, month: string) => {
+    setSyncStatus({ status: "syncing", progress: undefined })
+    let baselineId = 0
+    try { const base = await syncApi.logs({ limit: 1 }); baselineId = base[0]?.id ?? 0 } catch { /* ignore */ }
+    try {
+      await syncApi.triggerOne(dataSourceId, month, month)
+    } catch (e) {
+      console.error("Sync-one dispatch failed:", e)
+      setSyncStatus({ status: "error" })
+      setTimeout(() => setSyncStatus((prev) => ({ ...prev, status: "idle" })), 4000)
+      return
+    }
+    const startedAt = Date.now()
+    const poll = async () => {
+      let logs: Awaited<ReturnType<typeof syncApi.logs>> = []
+      try { logs = await syncApi.logs({ data_source_id: dataSourceId, limit: 20 }) } catch { /* retry */ }
+      const fresh = logs.filter((l) => l.id > baselineId)
+      const running = fresh.filter((l) => l.status === "running").length
+      const success = fresh.filter((l) => l.status === "success").length
+      const failed = fresh.filter((l) => l.status === "failed").length
+      const progress = { running, success, failed, total: fresh.length }
+      if (fresh.length > 0 && running === 0) {
+        await loadLastSync()
+        setSyncStatus({ status: failed > 0 ? "error" : "success", lastSync: new Date().toISOString(), progress })
+        setTimeout(() => setSyncStatus((prev) => ({ ...prev, status: "idle", progress: undefined })), 5000)
+        return
+      }
+      if (Date.now() - startedAt > 20 * 60 * 1000) {
+        setSyncStatus((prev) => ({ ...prev, status: "idle" }))
+        return
+      }
+      setSyncStatus({ status: "syncing", progress })
+      setTimeout(poll, 5000)
+    }
+    setTimeout(poll, 2500)
+  }
+
   const timeAgo = (dateStr: string) => {
     const diff = Date.now() - new Date(dateStr).getTime()
     const mins = Math.floor(diff / 60000)
@@ -318,6 +408,10 @@ export function Header() {
               {discoverLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Search className="w-4 h-4 mr-2" />}
               发现 GCP 项目
             </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => { resetGcpView(); setGcpViewOpen(true) }}>
+              <Plus className="w-4 h-4 mr-2" />
+              接入 GCP 账单视图…
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
 
@@ -382,6 +476,72 @@ export function Header() {
                 ) : (
                   "开始同步"
                 )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* 接入 GCP 账单视图：填视图 → 验证 → 保存并同步 */}
+        <Dialog open={gcpViewOpen} onOpenChange={(o) => { setGcpViewOpen(o); if (!o) resetGcpView() }}>
+          <DialogContent className="sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle>接入 GCP 账单视图</DialogTitle>
+              <DialogDescription>
+                供应商把客户项目的账单做成一个 BigQuery 视图并授权我们 SA 只读后，填在这里即可接入。
+                建议先「验证」确认能读到数据，再「保存并同步」。
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-3 py-2">
+              <div className="space-y-1.5">
+                <Label className="text-xs">数据源名称</Label>
+                <Input value={gvName} onChange={(e) => setGvName(e.target.value)} placeholder="例如 xhk-20260828-1" />
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Project</Label>
+                  <Input value={gvProject} onChange={(e) => setGvProject(e.target.value)} placeholder="bq-export-500502" className="font-mono text-xs" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Dataset</Label>
+                  <Input value={gvDataset} onChange={(e) => setGvDataset(e.target.value)} placeholder="gcp_billing" className="font-mono text-xs" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Table / View</Label>
+                  <Input value={gvTable} onChange={(e) => setGvTable(e.target.value)} placeholder="fs-hkxm-cost" className="font-mono text-xs" />
+                </div>
+              </div>
+
+              {gvResult && (
+                <div className={cn(
+                  "rounded-md border p-2.5 text-xs",
+                  gvResult.ok && gvResult.rows > 0 ? "border-status-active/40 bg-status-active/5"
+                    : gvResult.ok ? "border-yellow-500/40 bg-yellow-500/5"
+                    : "border-destructive/40 bg-destructive/5"
+                )}>
+                  {!gvResult.ok ? (
+                    <div className="text-destructive break-all">读取失败：{gvResult.error}</div>
+                  ) : gvResult.rows === 0 ? (
+                    <div className="text-yellow-600">视图能读，但最近 60 天没有数据（可能白名单 project.id 拼错，或刚开导出未回填）。</div>
+                  ) : (
+                    <div className="space-y-1">
+                      <div className="text-status-active">✓ 读到 {gvResult.rows} 行（近 60 天）</div>
+                      {gvResult.projects.map((p) => (
+                        <div key={p.project_id} className="flex justify-between gap-2 font-mono">
+                          <span>{p.project_id}</span>
+                          <span className="text-muted-foreground">${p.cost} · {p.min_date}~{p.max_date}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button type="button" variant="outline" onClick={handleGvVerify} disabled={!gvFilled || gvVerifying}>
+                {gvVerifying ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />验证中…</> : "验证读取"}
+              </Button>
+              <Button type="button" onClick={handleGvSave} disabled={!gvFilled || !gvName.trim() || gvSaving}>
+                {gvSaving ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />保存中…</> : "保存并同步"}
               </Button>
             </DialogFooter>
           </DialogContent>
