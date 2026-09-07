@@ -11,6 +11,8 @@ function getApiBase(): string {
 }
 
 const API_BASE = getApiBase()
+/** 暴露给其他模块直接拼 URL（layout 心跳 raw 检测、SDK 之外的临时 fetch 等） */
+export const API_BASE_URL = API_BASE
 
 function redirectToLogin(force = false) {
   if (typeof window === "undefined") return
@@ -51,9 +53,26 @@ async function tryRefresh(): Promise<boolean> {
   return _refreshingPromise
 }
 
+/** 全局 fetch 超时；批量类长操作（如 Taiji 批量建几百账号）走更长的超时阈值。 */
+const _DEFAULT_FETCH_TIMEOUT_MS = 30_000
+const _LONG_FETCH_PATTERNS = [
+  /\/api\/service-accounts\/taiji-from-blob$/,
+  /\/api\/service-accounts\/taiji-cleanup-duplicates$/,
+  /\/api\/service-accounts\/taiji-ingest-day$/,
+  /\/api\/service-accounts\/azure-sync-subscription-names$/,
+  /\/api\/service-accounts\/bulk-/,
+  /\/api\/service-accounts\/hard\//,  // 删除大批账号
+  /\/api\/sync\/refresh-summary/,  // billing_daily_summary 重算可能 1~5min
+]
+
+function _timeoutFor(url: string): number {
+  for (const re of _LONG_FETCH_PATTERNS) if (re.test(url)) return 300_000  // 5 min for heavy ops
+  return _DEFAULT_FETCH_TIMEOUT_MS
+}
+
 async function doFetch(url: string, restInit: RequestInit, headers: Record<string, string>): Promise<Response> {
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 30000)
+  const timeout = setTimeout(() => controller.abort(), _timeoutFor(url))
   try {
     return await fetch(url, {
       ...restInit,
@@ -169,6 +188,10 @@ export interface ServiceAccount {
   supply_source_id: number
   supplier_name: string
   provider: string
+  /** 主体 id（供应商→货源→主体→服务账号 这一层）；null 表示未分配主体。 */
+  entity_id?: number | null
+  /** 主体名称；entity_id 为 null 时也为 null。 */
+  entity_name?: string | null
   external_project_id: string
   status: string
   order_method?: string | null
@@ -183,6 +206,18 @@ export interface SupplySourceItem {
   supplier_id: number
   supplier_name: string | null
   provider: string
+  account_count: number
+}
+
+/** 主体（供应商 → 货源 → 主体）。来自 /api/suppliers/entities/all 或 /supply-sources/{id}/entities */
+export interface EntityItem {
+  id: number
+  supply_source_id: number
+  supplier_id?: number | null
+  supplier_name?: string | null
+  provider?: string | null
+  name: string
+  note?: string | null
   account_count: number
 }
 
@@ -261,6 +296,8 @@ export interface AlertRule {
   notify_webhook: string | null
   notify_email: string | null
   is_active: boolean
+  start_date: string | null
+  end_date: string | null
   created_at: string
 }
 
@@ -395,6 +432,7 @@ export const accountsApi = {
   get: (id: number) => request<ServiceAccountDetail>(`/api/service-accounts/${id}`),
   create: (data: {
     supply_source_id: number
+    entity_id?: number | null
     name: string
     external_project_id: string
     secret_data?: Record<string, unknown>
@@ -405,6 +443,10 @@ export const accountsApi = {
   update: (id: number, data: {
     name?: string
     supply_source_id?: number
+    /** 主体 id；undefined=不动，具体 id=切换。清主体走 clear_entity=true。 */
+    entity_id?: number
+    /** 显式清空主体，与 entity_id 互斥。后端切换 supply_source 时自动清空。 */
+    clear_entity?: boolean
     external_project_id?: string
     secret_data?: Record<string, unknown>
     notes?: string
@@ -427,6 +469,101 @@ export const accountsApi = {
       target_provider: string
       target_supplier_name: string
     }>("/api/service-accounts/bulk-assign", { method: "POST", body: JSON.stringify(data) }),
+  /**
+   * 批量分配服务账号到主体（或清空主体）。
+   * 规则：target_entity_id=null 表示「未分配主体」；非空时账号必须与目标主体在同一货源下，
+   *       跨货源一律跳过。返回 { moved: 成功数, skipped: [{account_id, reason}], target_* }。
+   */
+  bulkAssignEntity: (data: { account_ids: number[]; target_entity_id: number | null }) =>
+    request<{
+      moved: number
+      skipped: { account_id: number; reason: string }[]
+      target_entity_id: number | null
+      target_entity_name: string | null
+    }>("/api/service-accounts/bulk-assign-entity", { method: "POST", body: JSON.stringify(data) }),
+
+  /**
+   * Taiji 货源专用：前端零输入，由后端从 settings.TAIJI_BLOB_SAS_URL 自动拉最新
+   * 一天的快照 JSON，发现所有 (username, token) 对并批量建账号。后续按日由后台
+   * collector 自动按日拉 {date}_UTC+0.json 落库。
+   * - 服务端从环境变量读取 SAS（前端不传 URL，不需粘贴 JSON）
+   * - 仅读 JSON 顶层 "taiji" section
+   * - external_project_id = "<username>:<token_name>"
+   * - 已存在的跳过（幂等可重试）
+   */
+  /**
+   * Azure 货源专属：从 ARM 拉所有可见订阅的 displayName，更新本地 Project.name。
+   * 按 (tenant_id, client_id) 分组，同一 SP 一次 token + 一次 list；
+   * 与本地 external_project_id (subscription_id) 匹配后更新。
+   * 幂等：重复调不会重复更新。
+   */
+  azureSyncSubscriptionNames: (data: { supply_source_id: number }) =>
+    request<{
+      total_projects: number
+      updated: { project_id: number; subscription_id: string; old_name: string; new_name: string }[]
+      unchanged: number
+      missing: string[]
+      api_errors: string[]
+    }>("/api/service-accounts/azure-sync-subscription-names", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  /**
+   * Taiji 一天的 JSON 快照直接落库（绕过 Blob）。前端读本地文件 → POST 此接口。
+   * 共享 CA/DS，幂等（重复上传同一天唯一约束去重）。
+   * 全月上传后前端应再调一次 syncApi.refreshSummary() 刷预聚合。
+   */
+  taijiIngestDay: (data: {
+    supply_source_id: number
+    snapshot_json: Record<string, unknown>
+  }) =>
+    request<{
+      snapshot_date: string
+      projects_created: number
+      projects_existing: number
+      billing_rows_inserted: number
+    }>("/api/service-accounts/taiji-ingest-day", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  taijiFromBlob: (data: {
+    supply_source_id: number
+    entity_id?: number | null
+  }) =>
+    request<{
+      created: number
+      skipped: { external_project_id: string; reason: string }[]
+      total_parsed: number
+      snapshot_date: string | null
+      section_used: string
+    }>("/api/service-accounts/taiji-from-blob", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  /**
+   * Taiji 货源专用：把"每账号一个独立 CA/DS"的历史脏数据合并为
+   * supply_source 级共享 CA/DS，并去重 billing_summary 中被 N 次复制的费用行。
+   * - dry_run=true 只统计、不动数据
+   * - dry_run=false 落地
+   * 权限要求：cloud_admin。仅在历史导入数据被 N× 放大时调用一次。
+   */
+  taijiCleanupDuplicates: (data: { supply_source_id: number; dry_run: boolean }) =>
+    request<{
+      dry_run: boolean
+      total_data_sources_before: number
+      kept_data_source_id: number | null
+      orphan_data_sources_removed: number
+      orphan_cloud_accounts_removed: number
+      billing_rows_deleted_as_dup: number
+      billing_rows_reassigned_to_kept: number
+      projects_repointed: number
+    }>("/api/service-accounts/taiji-cleanup-duplicates", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
   suspend: (id: number) =>
     request<ServiceAccountDetail>(`/api/service-accounts/${id}/suspend`, { method: "POST" }),
   activate: (id: number) =>
@@ -483,6 +620,29 @@ export const suppliersApi = {
     const qs = supplierId != null ? `?supplier_id=${supplierId}` : ""
     return request<SupplySourceItem[]>(`/api/suppliers/supply-sources/all${qs}`)
   },
+
+  // ─── 主体（Entity）：suppliers → supply_sources → entities → projects ───
+  listEntities: (supplySourceId: number) =>
+    request<EntityItem[]>(`/api/suppliers/supply-sources/${supplySourceId}/entities`),
+  listAllEntities: (params?: { supply_source_id?: number; supplier_id?: number }) => {
+    const qs = new URLSearchParams()
+    if (params?.supply_source_id != null) qs.set("supply_source_id", String(params.supply_source_id))
+    if (params?.supplier_id != null) qs.set("supplier_id", String(params.supplier_id))
+    const s = qs.toString()
+    return request<EntityItem[]>(`/api/suppliers/entities/all${s ? `?${s}` : ""}`)
+  },
+  createEntity: (supplySourceId: number, data: { name: string; note?: string | null }) =>
+    request<EntityItem>(`/api/suppliers/supply-sources/${supplySourceId}/entities`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateEntity: (entityId: number, data: { name?: string; note?: string | null }) =>
+    request<EntityItem>(`/api/suppliers/entities/${entityId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  deleteEntity: (entityId: number) =>
+    request<void>(`/api/suppliers/entities/${entityId}`, { method: "DELETE" }),
 }
 
 // ─── Alerts API ───────────────────────────────────────────────
@@ -562,6 +722,21 @@ export const syncApi = {
     if (params?.limit != null) qs.set("limit", String(params.limit))
     const s = qs.toString()
     return request<SyncLogRow[]>(`/api/sync/logs${s ? `?${s}` : ""}`)
+  },
+  /**
+   * 重建 billing_daily_summary 预聚合表（dashboard 读这张）。
+   * 不传日期 = 按 billing_summary 全量范围重算。
+   * 权限：cloud_admin / cloud_ops。
+   */
+  refreshSummary: (start_date?: string, end_date?: string) => {
+    const qs = new URLSearchParams()
+    if (start_date) qs.set("start_date", start_date)
+    if (end_date) qs.set("end_date", end_date)
+    const s = qs.toString()
+    return request<{ status: string; refreshed_range?: string; reason?: string }>(
+      `/api/sync/refresh-summary${s ? `?${s}` : ""}`,
+      { method: "POST" },
+    )
   },
 }
 

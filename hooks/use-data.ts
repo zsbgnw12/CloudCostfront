@@ -7,6 +7,7 @@ import {
   meteringApi,
   type ServiceAccount,
   type SupplySourceItem,
+  type EntityItem,
   type DashboardBundle,
   type MeteringUsageSummary,
   type MeteringDailyUsage,
@@ -37,6 +38,13 @@ export function useAccounts(params?: { provider?: string; status?: string }) {
 /** 全部货源（含供应商名、云类型），用于树与筛选 */
 export function useSupplySourcesAll() {
   return useSWR<SupplySourceItem[]>("supply-sources-all", () => suppliersApi.listAllSupplySources(), {
+    dedupingInterval: 60000,
+  })
+}
+
+/** 全部主体（含 supplier/provider/account_count），用于树与下拉 */
+export function useEntitiesAll() {
+  return useSWR<EntityItem[]>("entities-all", () => suppliersApi.listAllEntities(), {
     dedupingInterval: 60000,
   })
 }

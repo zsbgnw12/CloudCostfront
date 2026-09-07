@@ -18,6 +18,7 @@ import {
 import { accountsApi, billingApi, type DailyReportRow, type CostSummary } from "@/lib/api"
 import { useAccounts, useSuppliers, useSupplySourcesAll } from "@/hooks/use-data"
 import { cn } from "@/lib/utils"
+import { format, startOfMonth, endOfMonth, subMonths, startOfQuarter, endOfQuarter, subQuarters, subDays } from "date-fns"
 import { useChartTheme } from "@/lib/chart-theme"
 
 const PROVIDER_LABELS: Record<string, string> = { aws: "AWS", gcp: "GCP", azure: "Azure", taiji: "Taiji" }
@@ -72,6 +73,8 @@ export default function DailyReportPage() {
   const [supplySourceId, setSupplySourceId] = useState("__all__")
   /** 服务账号多选：空数组 = 不限（按上游货源/供应商范围） */
   const [accountIds, setAccountIds] = useState<number[]>([])
+  /** Taiji 货源专属：用户(username) 筛选；"__all__" = 全部用户 */
+  const [taijiUsername, setTaijiUsername] = useState<string>("__all__")
   const [loading, setLoading] = useState(false)
   /** 草稿字符串：允许空串、中间态，避免受控 number 一删就回 0 */
   const [discountInput, setDiscountInput] = useState("0")
@@ -120,7 +123,39 @@ export default function DailyReportPage() {
 
   useEffect(() => {
     setAccountIds([])
+    setTaijiUsername("__all__")
   }, [supplySourceId])
+
+  useEffect(() => {
+    // 切用户清空下游账号选择，避免残留
+    setAccountIds([])
+  }, [taijiUsername])
+
+  /** 当前选中货源是否 Taiji */
+  const selectedSourceIsTaiji = useMemo(() => {
+    if (supplySourceId === "__all__") return false
+    return sources.find((s) => String(s.id) === supplySourceId)?.provider === "taiji"
+  }, [supplySourceId, sources])
+
+  /** 从 external_project_id "user:token" 取 username */
+  const _taijiUsernameOf = (extId: string | null | undefined): string => {
+    if (!extId) return ""
+    const i = extId.indexOf(":")
+    return i < 0 ? extId : extId.slice(0, i)
+  }
+
+  /** 当前 Taiji 货源下出现的所有用户名 */
+  const taijiUsernameOptions = useMemo(() => {
+    if (!selectedSourceIsTaiji) return [] as string[]
+    const ssid = Number(supplySourceId)
+    const set = new Set<string>()
+    for (const a of accounts) {
+      if (a.supply_source_id !== ssid) continue
+      const u = _taijiUsernameOf(a.external_project_id)
+      if (u) set.add(u)
+    }
+    return Array.from(set).sort((x, y) => x.localeCompare(y, "zh-CN"))
+  }, [accounts, supplySourceId, selectedSourceIsTaiji])
 
   const sourcesInScope = useMemo(() => {
     if (supplierId === "__all__") return sources
@@ -135,9 +170,13 @@ export default function DailyReportPage() {
         if (!allowed.has(a.supply_source_id)) return false
       }
       if (supplySourceId !== "__all__" && a.supply_source_id !== Number(supplySourceId)) return false
+      // Taiji 用户筛选：external_project_id 前缀过滤
+      if (selectedSourceIsTaiji && taijiUsername !== "__all__") {
+        if (_taijiUsernameOf(a.external_project_id) !== taijiUsername) return false
+      }
       return true
     })
-  }, [accounts, supplierId, supplySourceId, sourcesInScope])
+  }, [accounts, supplierId, supplySourceId, sourcesInScope, selectedSourceIsTaiji, taijiUsername])
 
   const chartScopeLabel = useMemo(() => {
     if (supplySourceId !== "__all__") {
@@ -266,20 +305,33 @@ export default function DailyReportPage() {
   }, [filteredRows, filteredAccounts, accountIds])
 
   // Line chart: daily total per account（金额 × 折扣系数，仅展示）
+  // Taiji 类聚合平台导入后单次可能 ~600+ 服务账号，直接画 600+ 条 Line 会撑爆图、卡死浏览器；
+  // 这里按账号总费用降序保留 Top N，其余合并为「其他」聚合线，再加一条「合计」。
+  const LINE_TOP_N = 10
   const lineChartData = useMemo(() => {
-    if (pivot.dates.length === 0) return { data: [], accountNames: [] }
+    if (pivot.dates.length === 0) return { data: [], accountNames: [], otherCount: 0 }
     const allAccounts = pivot.groups.flatMap((g) => g.accounts)
-    const accountNames = allAccounts.map((a) => a.name)
+    const sorted = [...allAccounts].sort((a, b) => b.total - a.total)
+    const topAccts = sorted.slice(0, LINE_TOP_N)
+    const restAccts = sorted.slice(LINE_TOP_N)
+    const hasOther = restAccts.length > 0
+    const accountNames = topAccts.map((a) => a.name)
+    if (hasOther) accountNames.push("其他")
     const f = costFactor
     const data = pivot.dates.map((d) => {
       const row: Record<string, unknown> = { date: d.slice(5) }
-      for (const a of allAccounts) {
+      for (const a of topAccts) {
         row[a.name] = ((a.dailyCosts.get(d) ?? 0) * f)
+      }
+      if (hasOther) {
+        let sum = 0
+        for (const a of restAccts) sum += (a.dailyCosts.get(d) ?? 0)
+        row["其他"] = sum * f
       }
       row["合计"] = (pivot.dateTotals.get(d) ?? 0) * f
       return row
     })
-    return { data, accountNames }
+    return { data, accountNames, otherCount: restAccts.length }
   }, [pivot, costFactor])
 
   /** 单账号：每日服务堆叠柱（来自计费汇总 API，与旧「计费」页一致） */
@@ -414,6 +466,25 @@ export default function DailyReportPage() {
                 </SelectContent>
               </Select>
             </div>
+            {/* Taiji 货源专属：用户筛选（在货源和服务账号中间） */}
+            {selectedSourceIsTaiji && (
+              <div className="space-y-1">
+                <Label className="text-xs">用户</Label>
+                <Select
+                  value={taijiUsername}
+                  onValueChange={(v) => setTaijiUsername(v)}
+                  disabled={taijiUsernameOptions.length === 0}
+                >
+                  <SelectTrigger className="w-44"><SelectValue placeholder="全部用户" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__all__">全部用户 ({taijiUsernameOptions.length})</SelectItem>
+                    {taijiUsernameOptions.map((u) => (
+                      <SelectItem key={u} value={u}>{u}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <div className="space-y-1">
               <Label className="text-xs">服务账号</Label>
               <MultiSelect
@@ -438,6 +509,62 @@ export default function DailyReportPage() {
             <div className="space-y-1">
               <Label className="text-xs">结束日期</Label>
               <Input type="date" value={dateRange.end} onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })} className="w-40" />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">快捷</Label>
+              <div className="flex items-center gap-1 flex-wrap">
+                {/* 一组快捷预设：今天 / 昨天 / 近 N 天 / 本月 / 上个月 / 本季度 / 上个季度 */}
+                <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => {
+                  const t = format(new Date(), "yyyy-MM-dd")
+                  setDateRange({ start: t, end: t })
+                }}>今天</Button>
+                <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => {
+                  const y = format(subDays(new Date(), 1), "yyyy-MM-dd")
+                  setDateRange({ start: y, end: y })
+                }}>昨天</Button>
+                <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => {
+                  const today = new Date()
+                  setDateRange({
+                    start: format(subDays(today, 6), "yyyy-MM-dd"),
+                    end: format(today, "yyyy-MM-dd"),
+                  })
+                }}>近7天</Button>
+                <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => {
+                  const today = new Date()
+                  setDateRange({
+                    start: format(subDays(today, 29), "yyyy-MM-dd"),
+                    end: format(today, "yyyy-MM-dd"),
+                  })
+                }}>近30天</Button>
+                <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => {
+                  const today = new Date()
+                  setDateRange({
+                    start: format(startOfMonth(today), "yyyy-MM-dd"),
+                    end: format(today, "yyyy-MM-dd"),
+                  })
+                }}>本月</Button>
+                <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => {
+                  const lastM = subMonths(new Date(), 1)
+                  setDateRange({
+                    start: format(startOfMonth(lastM), "yyyy-MM-dd"),
+                    end: format(endOfMonth(lastM), "yyyy-MM-dd"),
+                  })
+                }}>上个月</Button>
+                <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => {
+                  const today = new Date()
+                  setDateRange({
+                    start: format(startOfQuarter(today), "yyyy-MM-dd"),
+                    end: format(today, "yyyy-MM-dd"),
+                  })
+                }}>本季度</Button>
+                <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => {
+                  const lastQ = subQuarters(new Date(), 1)
+                  setDateRange({
+                    start: format(startOfQuarter(lastQ), "yyyy-MM-dd"),
+                    end: format(endOfQuarter(lastQ), "yyyy-MM-dd"),
+                  })
+                }}>上个季度</Button>
+              </div>
             </div>
             <div className="space-y-1">
               <Label className="text-xs">统一折扣（%）</Label>
@@ -497,7 +624,14 @@ export default function DailyReportPage() {
           {/* 2 每日费用趋势 */}
           <Card className="bg-card border-border">
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium">每日费用趋势（{chartScopeLabel}）</CardTitle>
+              <CardTitle className="text-sm font-medium">
+                每日费用趋势（{chartScopeLabel}）
+                {lineChartData.otherCount > 0 && (
+                  <span className="ml-2 text-xs font-normal text-muted-foreground">
+                    · 仅展示 Top {LINE_TOP_N}，其余 {lineChartData.otherCount} 个账号合并到「其他」
+                  </span>
+                )}
+              </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="h-[350px]">

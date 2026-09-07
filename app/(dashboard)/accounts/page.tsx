@@ -6,6 +6,7 @@ import {
   KeyRound, Pause, Play, Trash2, Eye, EyeOff, Pencil,
   Loader2, ArrowLeft, Building2,
   Link2, Copy, CheckCircle2, AlertTriangle, Clock, ExternalLink,
+  Search, X,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -20,11 +21,11 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
-  accountsApi, azureConsentApi, authApi,
-  type ServiceAccount, type ServiceAccountDetail, type HistoryItem, type SupplySourceItem,
+  accountsApi, azureConsentApi, authApi, suppliersApi, syncApi,
+  type ServiceAccount, type ServiceAccountDetail, type HistoryItem, type SupplySourceItem, type EntityItem,
   type AzureConsentInvite, type AzureConsentStartResponse, type AzureDiscoveredSubscription,
 } from "@/lib/api"
-import { useAccounts, useSupplySourcesAll } from "@/hooks/use-data"
+import { useAccounts, useSupplySourcesAll, useEntitiesAll } from "@/hooks/use-data"
 import useSWR from "swr"
 import { cn } from "@/lib/utils"
 
@@ -58,6 +59,9 @@ const ORDER_METHOD_OPTIONS = [
 
 const ORDER_METHOD_SELECT_SENTINEL = "__none__"
 
+/** 主体下拉框中代表「未分配主体」的哨兵值（Select 不能用空字符串作 value）。 */
+const ENTITY_SELECT_UNASSIGNED = "__unassigned__"
+
 /** 弹窗内输入/选择：与浅色区块底区分，避免与背景糊成一片 */
 const CTRL_SURFACE = "bg-background border border-input shadow-sm dark:bg-background/95"
 
@@ -90,6 +94,12 @@ const AWS_CRED_JSON_PLACEHOLDER = `{
   "aws_secret_access_key": ""
 }`
 
+const TAIJI_CRED_JSON_PLACEHOLDER = `{
+  "api_base": "https://api.taijiaicloud.com",
+  "access_token": "sk-...",
+  "admin_user_id": "1"
+}`
+
 /** 解析 AWS 配置 JSON（字段或整段 JSON），得到入库所需 external_id 与 secret_data */
 function parseAwsCredentialJson(raw: string): { external_id: string; secret_data: Record<string, string> } {
   if (!raw.trim()) throw new Error("请填写 AWS 配置")
@@ -110,6 +120,27 @@ function parseAwsCredentialJson(raw: string): { external_id: string; secret_data
       aws_access_key_id: ak,
       aws_secret_access_key: sk,
     },
+  }
+}
+
+/** Taiji：JSON 一键粘贴，含 api_base/access_token/admin_user_id；external_id 取 admin_user_id */
+function parseTaijiCredentialJson(raw: string): { external_id: string; secret_data: { api_base: string; access_token: string; admin_user_id: string } } {
+  if (!raw.trim()) throw new Error("请填写 Taiji 配置")
+  let o: Record<string, unknown>
+  try {
+    o = JSON.parse(raw) as Record<string, unknown>
+  } catch {
+    throw new Error("Taiji 配置不是合法 JSON")
+  }
+  const api_base = String(o.api_base ?? "").trim().replace(/\/+$/, "")
+  const access_token = String(o.access_token ?? "").trim()
+  const admin_user_id = String(o.admin_user_id ?? "").trim()
+  if (!api_base || !access_token || !admin_user_id) {
+    throw new Error("JSON 中需包含 api_base、access_token、admin_user_id")
+  }
+  return {
+    external_id: admin_user_id,
+    secret_data: { api_base, access_token, admin_user_id },
   }
 }
 
@@ -263,6 +294,9 @@ function CredentialSection({
   onAzureJsonChange: (v: string) => void
   /** Azure Tab A 的渲染体，由父组件提供（它持有 invite 状态） */
   inviteSection?: React.ReactNode
+  /** Taiji 专用：Blob SAS URL（容器级 sr=c、只读 sp=r） */
+  taijiBlobSasUrl?: string
+  onTaijiBlobSasUrlChange?: (v: string) => void
 }) {
   const p = provider.toLowerCase()
   const isAzure = p === "azure"
@@ -354,6 +388,25 @@ function CredentialSection({
             value={secretJson}
             onChange={(e) => onSecretJsonChange(e.target.value)}
           />
+        </>
+      )}
+
+      {p === "taiji" && (
+        <>
+          <div className="space-y-1.5">
+            <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Taiji 自动接入（无需任何输入）</p>
+            <p className="text-[11px] text-muted-foreground leading-snug">
+              点击「添加」时，后端会用服务端配置的 Blob SAS URL（
+              <code className="text-xs">TAIJI_BLOB_SAS_URL</code>）自动拉最近一天的
+              <code className="text-xs"> {`{date}_UTC+0.json`}</code> 快照，从顶层
+              <code className="text-xs"> taiji</code> section 抽
+              <code className="text-xs"> (username, token_name)</code> 对，批量建服务账号。
+              后续按日由后台 collector 自动从同一 SAS URL 拉数据落库。
+            </p>
+            <p className="text-[11px] text-muted-foreground leading-snug">
+              若提示「未配置 TAIJI_BLOB_SAS_URL」，请联系运维在 Container App 环境变量里加该值。
+            </p>
+          </div>
         </>
       )}
 
@@ -787,52 +840,210 @@ function mergeAzureCredentialJson(
   }
 }
 
-/* ─── Tree: 供应商 → 货源(云) → 账号 ───────────────────────── */
+/* ─── Tree: 供应商 → 货源(云) → 主体/用户 → 账号 ───────────────
+ * 非 Taiji 货源：供应商 → 货源 → 主体 → 服务账号
+ * Taiji 货源 ：供应商 → 货源 → 用户 (= external_project_id 冒号前段) → 密钥(= 服务账号)
+ *   Taiji 不走主体语义（账号 entity_id 永远 NULL），改按 username 分组，
+ *   每个 username 下挂多个 密钥(token_name)，UI 文案换"用户/密钥"。
+ */
+/** 主体桶。entityId === null 表示「未分配主体」分组（accounts.entity_id 为空）。 */
+export interface EntityBucket {
+  entityId: number | null
+  entityName: string | null
+  note: string | null
+  accounts: ServiceAccount[]
+}
+/** Taiji 用户桶。username 来自 external_project_id 冒号前段 */
+export interface UserBucket {
+  username: string
+  accounts: ServiceAccount[]
+}
+interface SourceBucket {
+  supplySourceId: number
+  provider: string
+  entities: EntityBucket[]   // 非 Taiji 用
+  users?: UserBucket[]       // Taiji 专用；其他 provider 留 undefined
+}
 interface SupplierTreeNode {
   supplierName: string
-  sources: { supplySourceId: number; provider: string; accounts: ServiceAccount[] }[]
+  sources: SourceBucket[]
 }
 
-function buildTree(accounts: ServiceAccount[], sources: SupplySourceItem[]): SupplierTreeNode[] {
+const UNASSIGNED_ENTITY_LABEL = "未分配主体"
+const UNKNOWN_TAIJI_USER_LABEL = "未知用户"
+
+/** 从 external_project_id 提取 Taiji 用户名（"username:token_name" → "username"）。 */
+function _extractTaijiUsername(externalProjectId: string | undefined | null): string {
+  if (!externalProjectId) return UNKNOWN_TAIJI_USER_LABEL
+  const idx = externalProjectId.indexOf(":")
+  if (idx <= 0) return externalProjectId  // 没冒号当 username 直接当全名
+  return externalProjectId.slice(0, idx)
+}
+
+/** 从 external_project_id 提取 Taiji 密钥(token_name)（"username:token_name" → "token_name"）。 */
+function _extractTaijiTokenName(externalProjectId: string | undefined | null): string {
+  if (!externalProjectId) return ""
+  const idx = externalProjectId.indexOf(":")
+  if (idx < 0) return externalProjectId
+  return externalProjectId.slice(idx + 1)
+}
+
+function buildTree(
+  accounts: ServiceAccount[],
+  sources: SupplySourceItem[],
+  entities: EntityItem[],
+): SupplierTreeNode[] {
   const srcById = new Map(sources.map((s) => [s.id, s]))
-  const bySup = new Map<string, Map<number, ServiceAccount[]>>()
+
+  // sup → supplySourceId → entityId(null = 未分配) → bucket
+  type EBuckets = Map<number | null, EntityBucket>
+  const bySup = new Map<string, Map<number, EBuckets>>()
+
+  const ensureSup = (name: string) => {
+    if (!bySup.has(name)) bySup.set(name, new Map())
+    return bySup.get(name)!
+  }
+  const ensureSrc = (m: Map<number, EBuckets>, ssid: number) => {
+    if (!m.has(ssid)) m.set(ssid, new Map())
+    return m.get(ssid)!
+  }
+  const ensureBucket = (
+    b: EBuckets,
+    entityId: number | null,
+    entityName: string | null,
+    note: string | null,
+  ) => {
+    const existing = b.get(entityId)
+    if (existing) return existing
+    const fresh: EntityBucket = { entityId, entityName, note, accounts: [] }
+    b.set(entityId, fresh)
+    return fresh
+  }
+
+  // 先建空货源 + 空主体桶（即使没有账号也展示出来）
   for (const s of sources) {
     const name = s.supplier_name ?? "未知"
-    if (!bySup.has(name)) bySup.set(name, new Map())
-    if (!bySup.get(name)!.has(s.id)) bySup.get(name)!.set(s.id, [])
+    ensureSrc(ensureSup(name), s.id)
   }
+  for (const e of entities) {
+    const src = srcById.get(e.supply_source_id)
+    const sname = src?.supplier_name ?? e.supplier_name ?? "未知"
+    const b = ensureSrc(ensureSup(sname), e.supply_source_id)
+    ensureBucket(b, e.id, e.name, e.note ?? null)
+  }
+
+  // 分账号到桶里。账号无 entity_id → 「未分配主体」
   for (const a of accounts) {
-    const name = srcById.get(a.supply_source_id)?.supplier_name ?? "未知"
-    if (!bySup.has(name)) bySup.set(name, new Map())
-    const m = bySup.get(name)!
-    if (!m.has(a.supply_source_id)) m.set(a.supply_source_id, [])
-    m.get(a.supply_source_id)!.push(a)
+    const src = srcById.get(a.supply_source_id)
+    const sname = src?.supplier_name ?? a.supplier_name ?? "未知"
+    const b = ensureSrc(ensureSup(sname), a.supply_source_id)
+    if (a.entity_id != null) {
+      const bucket = ensureBucket(b, a.entity_id, a.entity_name ?? null, null)
+      bucket.accounts.push(a)
+    } else {
+      const bucket = ensureBucket(b, null, null, null)
+      bucket.accounts.push(a)
+    }
   }
+
   return Array.from(bySup.entries())
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([supplierName, idMap]) => ({
       supplierName,
       sources: Array.from(idMap.entries())
-        .map(([supplySourceId, accts]) => ({
-          supplySourceId,
-          provider: srcById.get(supplySourceId)?.provider ?? "?",
-          accounts: accts,
-        }))
+        .map(([supplySourceId, bMap]) => {
+          const buckets = Array.from(bMap.values())
+          // 排序：未分配主体永远排最后；其余按名字
+          buckets.sort((x, y) => {
+            if (x.entityId === null) return 1
+            if (y.entityId === null) return -1
+            return (x.entityName ?? "").localeCompare(y.entityName ?? "", "zh-CN")
+          })
+          const provider = srcById.get(supplySourceId)?.provider ?? "?"
+          // Taiji 货源特殊：按 username 重新分组形成 users 桶，挂在 source 上
+          let users: UserBucket[] | undefined
+          if (provider === "taiji") {
+            const byUser = new Map<string, ServiceAccount[]>()
+            for (const b of buckets) {
+              for (const a of b.accounts) {
+                const u = _extractTaijiUsername(a.external_project_id)
+                if (!byUser.has(u)) byUser.set(u, [])
+                byUser.get(u)!.push(a)
+              }
+            }
+            users = Array.from(byUser.entries())
+              .map(([username, accts]) => ({ username, accounts: accts }))
+              .sort((x, y) => x.username.localeCompare(y.username, "zh-CN"))
+          }
+          return {
+            supplySourceId,
+            provider,
+            entities: buckets,
+            users,
+          }
+        })
         .sort((x, y) => x.provider.localeCompare(y.provider)),
     }))
 }
 
+/** 当前选中节点：
+ *  - 只选到货源 → entityId / username 均 undefined（展示该货源下所有账号）
+ *  - 选到具体主体（含「未分配」）→ entityId === number | null
+ *  - Taiji 选到具体用户 → username === string（按 external_project_id 前缀过滤）
+ *
+ *  entityId 与 username 互斥：Taiji 的 entity_id 永远 NULL，所以右侧面板按 username 过滤；
+ *  非 Taiji 走 entityId 路径。
+ */
 export type SelectedSupplySource = {
   supplySourceId: number
   supplierName: string
   provider: string
+  entityId?: number | null
+  entityName?: string | null
+  username?: string
 }
 
 /* ─── Main Page ──────────────────────────────────────────── */
 export default function AccountsPage() {
   const { data: accounts = [], mutate: mutateAccounts, isLoading: loading } = useAccounts()
   const { data: sources = [], mutate: mutateSources } = useSupplySourcesAll()
+  const { data: entities = [], mutate: mutateEntities } = useEntitiesAll()
   const [selectedGroup, setSelectedGroup] = useState<SelectedSupplySource | null>(null)
+
+  // ─── 左侧树面板宽度（可拖拽，localStorage 持久化） ─────────────
+  // 主体名长了会顶到面板右边，挡住「✏️/🗑️」按钮，所以需要可拖宽。
+  // 范围 [280, 700] 是经验值：再窄货源名/账号数 badge 会换行，再宽挤压右侧账号卡片。
+  const SIDEBAR_MIN = 280
+  const SIDEBAR_MAX = 700
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+    if (typeof window === "undefined") return 320
+    const saved = Number(window.localStorage.getItem("accounts:sidebarWidth") ?? "")
+    return Number.isFinite(saved) && saved >= SIDEBAR_MIN && saved <= SIDEBAR_MAX ? saved : 320
+  })
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    window.localStorage.setItem("accounts:sidebarWidth", String(sidebarWidth))
+  }, [sidebarWidth])
+  const onSidebarDragStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    const startX = e.clientX
+    const startW = sidebarWidth
+    const onMove = (ev: MouseEvent) => {
+      const next = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, startW + (ev.clientX - startX)))
+      setSidebarWidth(next)
+    }
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove)
+      document.removeEventListener("mouseup", onUp)
+      document.body.style.cursor = ""
+      document.body.style.userSelect = ""
+    }
+    document.addEventListener("mousemove", onMove)
+    document.addEventListener("mouseup", onUp)
+    // 拖动过程中防选中文字、统一光标
+    document.body.style.cursor = "col-resize"
+    document.body.style.userSelect = "none"
+  }, [sidebarWidth])
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [detail, setDetail] = useState<ServiceAccountDetail | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
@@ -848,13 +1059,13 @@ export default function AccountsPage() {
     [],
   )
 
-  // View mode: "cards" shows account cards for selected group, "detail" shows single account
-  const viewMode = selectedId && detail ? "detail" : "cards"
-
   // external_project_id：入库的账号/订阅/项目 ID；Azure 与订阅字段同步，AWS/GCP 由下方 JSON 解析或编辑预填
+  // Taiji：不走单建路径，secret_json 复用为快照 JSON、taiji_blob_sas_url 单独存放 SAS
   const [form, setForm] = useState({
     supplier_id: "",
     supply_source_id: "",
+    /** "" = 未分配主体；string(id) = 选中具体主体 */
+    entity_id: "",
     name: "", external_project_id: "",
     secret_json: "", notes: "",
     order_method: "",
@@ -862,11 +1073,15 @@ export default function AccountsPage() {
     azure_client_id: "",
     azure_client_secret: "",
     azure_json: "",
+    /** Taiji 专用：日快照 SAS URL（按日拉 {date}_UTC+0.json）。其他 provider 忽略 */
+    taiji_blob_sas_url: "",
   })
 
   const [editForm, setEditForm] = useState({
     supplier_id: "",
     supply_source_id: "",
+    /** "" = 未分配主体；string(id) = 选中具体主体 */
+    entity_id: "",
     name: "", external_project_id: "",
     secret_json: "", notes: "",
     order_method: "",
@@ -875,6 +1090,9 @@ export default function AccountsPage() {
     azure_client_secret: "",
     azure_json: "",
   })
+
+  /** 编辑时记录原始 entity_id（数字或 null），用于 patch 决策（不动 / 切换 / 清空）。 */
+  const editOriginalEntityRef = useRef<number | null>(null)
 
   /** 编辑 Azure 时拉取的凭证，用于在「应用密钥」留空时保留原值 */
   const editAzureCredsRef = useRef<Record<string, string> | null>(null)
@@ -890,6 +1108,100 @@ export default function AccountsPage() {
   // 当前用户的 visible_providers — null 表示全量(admin/ops)
   const { data: me } = useSWR("auth:me", () => authApi.me(), { revalidateOnFocus: false })
   const visibleProviders = me?.visible_providers  // null = 全量;["aws"] = 仅 AWS
+  const isCloudAdmin = (me?.roles ?? []).includes("cloud_admin")
+
+  // Taiji 清理重复数据的 running 状态；真正的 handler 在 load 声明之后定义
+  // （deps 引用 load —— 不能放在 load 上面，否则 TDZ）。
+  const [taijiCleanupRunning, setTaijiCleanupRunning] = useState(false)
+  // Taiji 按月份同步（一次性操作触发 backend collector 按日拉 blob）
+  const [taijiSyncRunning, setTaijiSyncRunning] = useState(false)
+  const [taijiSyncStatus, setTaijiSyncStatus] = useState<string>("")
+  // Taiji 文件上传直传（绕过 blob，前端读 JSON 文件 → POST /taiji-ingest-day）
+  const [taijiUploadRunning, setTaijiUploadRunning] = useState(false)
+  const [taijiUploadStatus, setTaijiUploadStatus] = useState<string>("")
+  const taijiFileInputRef = useRef<HTMLInputElement>(null)
+
+  /** 当前用户能否管理某 provider 下的主体（增/改/删）。
+   *  - admin/ops (visibleProviders === null) → 任意 provider
+   *  - cloud_<provider> → 自己的 provider
+   *  与后端 ensure_provider_visible 完全对齐。 */
+  const canManageEntityProvider = useCallback(
+    (provider: string) => {
+      if (!visibleProviders) return true
+      return visibleProviders.includes(provider)
+    },
+    [visibleProviders],
+  )
+
+  // ─── 主体 CRUD 对话框状态 ────────────────────────────────────
+  const [entityDialogOpen, setEntityDialogOpen] = useState(false)
+  const [entityDialogMode, setEntityDialogMode] = useState<"create" | "edit">("create")
+  const [entityDialogTarget, setEntityDialogTarget] = useState<{
+    supplySourceId: number
+    supplierName: string
+    provider: string
+    entityId?: number
+  } | null>(null)
+  const [entityForm, setEntityForm] = useState<{ name: string; note: string }>({ name: "", note: "" })
+  const [entitySubmitting, setEntitySubmitting] = useState(false)
+
+  const openCreateEntity = (supplySourceId: number, supplierName: string, provider: string) => {
+    setEntityDialogMode("create")
+    setEntityDialogTarget({ supplySourceId, supplierName, provider })
+    setEntityForm({ name: "", note: "" })
+    setEntityDialogOpen(true)
+  }
+  const openEditEntity = (e: { id: number; name: string; note: string | null; supplySourceId: number }) => {
+    setEntityDialogMode("edit")
+    const src = sources.find((s) => s.id === e.supplySourceId)
+    setEntityDialogTarget({
+      supplySourceId: e.supplySourceId,
+      supplierName: src?.supplier_name ?? "",
+      provider: src?.provider ?? "",
+      entityId: e.id,
+    })
+    setEntityForm({ name: e.name, note: e.note ?? "" })
+    setEntityDialogOpen(true)
+  }
+  const submitEntity = async () => {
+    if (!entityDialogTarget) return
+    const name = entityForm.name.trim()
+    if (!name) { alert("主体名称不能为空"); return }
+    const note = entityForm.note.trim() || null
+    setEntitySubmitting(true)
+    try {
+      if (entityDialogMode === "create") {
+        await suppliersApi.createEntity(entityDialogTarget.supplySourceId, { name, note })
+      } else if (entityDialogTarget.entityId != null) {
+        await suppliersApi.updateEntity(entityDialogTarget.entityId, { name, note })
+      }
+      setEntityDialogOpen(false)
+      await mutateEntities()
+      await mutateAccounts()
+    } catch (e) {
+      alert(`保存失败: ${(e as Error).message}`)
+    } finally {
+      setEntitySubmitting(false)
+    }
+  }
+  const handleDeleteEntity = async (e: { id: number; name: string; accountCount: number }) => {
+    if (e.accountCount > 0) {
+      alert(`主体「${e.name}」下还有 ${e.accountCount} 个服务账号，先把账号迁出或解绑主体再删除`)
+      return
+    }
+    if (!confirm(`确定删除主体「${e.name}」？此操作不可撤销。`)) return
+    try {
+      await suppliersApi.deleteEntity(e.id)
+      // 若刚刚选中的就是这个主体，回退到货源整体
+      if (selectedGroup?.entityId === e.id) {
+        setSelectedGroup({ ...selectedGroup, entityId: undefined, entityName: undefined })
+      }
+      await mutateEntities()
+      await mutateAccounts()
+    } catch (err) {
+      alert(`删除失败: ${(err as Error).message}`)
+    }
+  }
 
   /** 按当前用户的 provider 范围过滤货源选项(添加/编辑云账号时,只能选自己能管的云)。 */
   const filterByProviderScope = (arr: SupplySourceItem[]) => {
@@ -911,36 +1223,387 @@ export default function AccountsPage() {
     return [...arr].sort((a, b) => a.provider.localeCompare(b.provider))
   }, [sources, editForm.supplier_id, visibleProviders])
 
+  /** 编辑弹窗当前选中货源下可选主体列表（按名字排序） */
+  const entitiesForEditSource = useMemo(() => {
+    if (!editForm.supply_source_id) return [] as EntityItem[]
+    const ssid = Number(editForm.supply_source_id)
+    return entities
+      .filter((e) => e.supply_source_id === ssid)
+      .sort((a, b) => (a.name || "").localeCompare(b.name || "", "zh-CN"))
+  }, [entities, editForm.supply_source_id])
+
+  /** 新建弹窗当前选中货源下可选主体列表 */
+  const entitiesForCreateSource = useMemo(() => {
+    if (!form.supply_source_id) return [] as EntityItem[]
+    const ssid = Number(form.supply_source_id)
+    return entities
+      .filter((e) => e.supply_source_id === ssid)
+      .sort((a, b) => (a.name || "").localeCompare(b.name || "", "zh-CN"))
+  }, [entities, form.supply_source_id])
+
   const load = useCallback(async () => {
-    await Promise.all([mutateAccounts(), mutateSources()])
-  }, [mutateAccounts, mutateSources])
+    await Promise.all([mutateAccounts(), mutateSources(), mutateEntities()])
+  }, [mutateAccounts, mutateSources, mutateEntities])
 
   const loadDetail = useCallback(async (id: number) => {
     try { setSelectedId(id); setShowCreds(false); setCreds(null); const d = await accountsApi.get(id); setDetail(d) }
     catch (e) { console.error(e) }
   }, [])
 
-  const tree = useMemo(() => buildTree(accounts, sources), [accounts, sources])
+  // Taiji 按月份同步：触发 backend celery 按月份范围拉 blob 落库。
+  //
+  // 任务结构是两层：
+  //   外层 sync_all_task：负责分发，结果是 {"dispatched": N, "task_ids": [...]}
+  //   内层 sync_data_source 任务：每个 DS 一个，真正按天拉 blob + 写 billing
+  //
+  // 之前只 poll 外层，外层会瞬间 SUCCESS（"我已分发"），用户误以为同步完了
+  // 但实际数据还在内层 task 里跑。修复：外层 SUCCESS 后自动顺着 task_ids 继续 poll。
+  const handleTaijiSyncMonth = useCallback(async () => {
+    if (!selectedGroup || selectedGroup.provider !== "taiji") return
+    const defaultMonth = "2026-04"
+    const m = window.prompt("输入要同步的月份 (YYYY-MM)：", defaultMonth) || ""
+    const trimmed = m.trim()
+    if (!trimmed) return
+    if (!/^\d{4}-\d{2}$/.test(trimmed)) {
+      alert("月份格式无效，需要 YYYY-MM，如 2026-04")
+      return
+    }
+    setTaijiSyncRunning(true)
+    setTaijiSyncStatus("dispatching...")
 
+    const pollUntilTerminal = async (taskId: string, label: string, maxMs: number) => {
+      const startMs = Date.now()
+      while (Date.now() - startMs < maxMs) {
+        await new Promise((res) => setTimeout(res, 3000))
+        try {
+          const st = await syncApi.status(taskId)
+          setTaijiSyncStatus(`${label}:${st.status}`)
+          if (st.status === "SUCCESS" || st.status === "FAILURE") return st
+        } catch (e) {
+          console.warn("sync status poll err:", e)
+        }
+      }
+      return { status: "TIMEOUT", result: null }
+    }
+
+    try {
+      const r = await syncApi.triggerAll(trimmed, trimmed, "taiji")
+      const outerTid =
+        (r as { task_id?: string }).task_id ??
+        ((r as unknown as { task_ids?: string[] }).task_ids?.[0] ?? null)
+      if (!outerTid) {
+        alert(`同步已分发，但响应里无 task_id：${JSON.stringify(r)}`)
+        return
+      }
+
+      // 第一阶段：等外层 dispatcher（瞬间完成）
+      setTaijiSyncStatus("dispatcher PENDING")
+      const outer = await pollUntilTerminal(outerTid, "dispatcher", 2 * 60 * 1000)
+
+      // 解出内层 task_ids
+      const innerIds: string[] = (() => {
+        const res = outer.result as unknown
+        if (!res || typeof res !== "object") return []
+        const obj = res as { task_ids?: unknown }
+        return Array.isArray(obj.task_ids) ? obj.task_ids.filter((x): x is string => typeof x === "string") : []
+      })()
+
+      if (outer.status !== "SUCCESS" || innerIds.length === 0) {
+        alert(
+          `${trimmed} 月份外层任务终态: ${outer.status}\n` +
+          `result: ${JSON.stringify(outer.result).slice(0, 800)}\n` +
+          (innerIds.length === 0 ? "（无内层 task_ids，可能该月无 Taiji DS 可同步）" : ""),
+        )
+        return
+      }
+
+      // 第二阶段：并行 poll 所有内层任务（一般只有 1 个，因为只有 shared DS）
+      setTaijiSyncStatus(`inner ×${innerIds.length} PENDING`)
+      const innerResults = await Promise.all(
+        innerIds.map((tid, i) => pollUntilTerminal(tid, `inner[${i}]`, 15 * 60 * 1000)),
+      )
+      const okCnt = innerResults.filter((x) => x.status === "SUCCESS").length
+      const failCnt = innerResults.filter((x) => x.status === "FAILURE").length
+      const timeoutCnt = innerResults.filter((x) => x.status === "TIMEOUT").length
+
+      const sampleResult = innerResults[0]?.result
+      alert(
+        `${trimmed} 月份同步完成：\n\n` +
+        `内层任务 ${innerIds.length} 个 → SUCCESS ${okCnt} / FAILURE ${failCnt} / TIMEOUT ${timeoutCnt}\n\n` +
+        `首个内层 result: ${sampleResult ? JSON.stringify(sampleResult).slice(0, 600) : "(空)"}`,
+      )
+      await load()
+    } catch (e) {
+      alert(`触发同步失败：${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setTaijiSyncRunning(false)
+    }
+  }, [selectedGroup, load])
+
+  // Taiji 文件直传 handler：用户选多个本地 JSON 文件 → 逐个 POST /taiji-ingest-day
+  // → 最后调一次 refresh-summary 刷预聚合。完全绕过 Blob。
+  const handleTaijiFileUpload = useCallback(async (files: FileList | null) => {
+    if (!files || files.length === 0) return
+    if (!selectedGroup || selectedGroup.provider !== "taiji") return
+    setTaijiUploadRunning(true)
+    setTaijiUploadStatus(`reading ${files.length} files...`)
+    const fileArr = Array.from(files)
+    let totalProjCreated = 0
+    let totalRowsTried = 0
+    const failed: string[] = []
+    try {
+      for (let i = 0; i < fileArr.length; i++) {
+        const f = fileArr[i]
+        setTaijiUploadStatus(`${i + 1}/${fileArr.length} ${f.name}`)
+        try {
+          const txt = await f.text()
+          const json = JSON.parse(txt) as Record<string, unknown>
+          const r = await accountsApi.taijiIngestDay({
+            supply_source_id: selectedGroup.supplySourceId,
+            snapshot_json: json,
+          })
+          totalProjCreated += r.projects_created
+          totalRowsTried += r.billing_rows_inserted
+        } catch (e) {
+          failed.push(`${f.name}: ${e instanceof Error ? e.message : String(e)}`)
+        }
+      }
+      // 全部入库后刷一次预聚合
+      setTaijiUploadStatus("refreshing summary...")
+      let refreshNote = ""
+      try {
+        const rs = await syncApi.refreshSummary()
+        refreshNote = `\n预聚合已刷新: ${rs.refreshed_range ?? rs.reason ?? "ok"}`
+      } catch (e) {
+        refreshNote = `\n⚠ 预聚合刷新失败: ${e instanceof Error ? e.message : e}`
+      }
+      const okCnt = fileArr.length - failed.length
+      const lines = [
+        `Taiji 直传完成：成功 ${okCnt} / ${fileArr.length} 天`,
+        `新建账号: ${totalProjCreated}`,
+        `billing 行尝试写入: ${totalRowsTried}（ON CONFLICT 自动跳重）`,
+        refreshNote,
+      ]
+      if (failed.length > 0) {
+        lines.push("", "失败文件:")
+        for (const f of failed.slice(0, 5)) lines.push(`  - ${f}`)
+        if (failed.length > 5) lines.push(`  ... 还有 ${failed.length - 5} 个失败`)
+      }
+      alert(lines.join("\n"))
+      await load()
+    } finally {
+      setTaijiUploadRunning(false)
+      setTaijiUploadStatus("")
+      if (taijiFileInputRef.current) taijiFileInputRef.current.value = ""
+    }
+  }, [selectedGroup, load])
+
+  // Azure 同步订阅名称（从 ARM 拉 displayName 更新 Project.name）
+  const [azureSyncSubRunning, setAzureSyncSubRunning] = useState(false)
+  const handleAzureSyncSubscriptionNames = useCallback(async () => {
+    if (!selectedGroup || selectedGroup.provider !== "azure") return
+    setAzureSyncSubRunning(true)
+    try {
+      const r = await accountsApi.azureSyncSubscriptionNames({
+        supply_source_id: selectedGroup.supplySourceId,
+      })
+      const lines: string[] = []
+      lines.push(`Azure 订阅名称同步：${r.total_projects} 个 Azure 服务账号`)
+      lines.push(`  · 已更新名称: ${r.updated.length}`)
+      lines.push(`  · 名称无变化: ${r.unchanged}`)
+      lines.push(`  · ARM 列表未匹配: ${r.missing.length}`)
+      if (r.updated.length > 0) {
+        lines.push("", "更新示例:")
+        for (const u of r.updated.slice(0, 5)) {
+          lines.push(`  - ${u.subscription_id.slice(0, 8)}…  "${u.old_name}"  →  "${u.new_name}"`)
+        }
+        if (r.updated.length > 5) lines.push(`  ... 还有 ${r.updated.length - 5} 个`)
+      }
+      if (r.missing.length > 0) {
+        lines.push("", `未匹配的 subscription_id（前 3 个）:`)
+        for (const m of r.missing.slice(0, 3)) lines.push(`  - ${m}`)
+      }
+      if (r.api_errors.length > 0) {
+        lines.push("", "API 错误:")
+        for (const e of r.api_errors.slice(0, 3)) lines.push(`  - ${e}`)
+      }
+      alert(lines.join("\n"))
+      await load()
+    } catch (e) {
+      alert(`同步失败：${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setAzureSyncSubRunning(false)
+    }
+  }, [selectedGroup, load])
+
+  // Taiji 清理重复数据 handler。必须在 load 声明之后定义（deps 引用 load）
+  const handleTaijiCleanup = useCallback(async () => {
+    if (!selectedGroup || selectedGroup.provider !== "taiji") return
+    setTaijiCleanupRunning(true)
+    try {
+      const dry = await accountsApi.taijiCleanupDuplicates({
+        supply_source_id: selectedGroup.supplySourceId,
+        dry_run: true,
+      })
+      const lines = [
+        `Taiji 重复数据清理 — 干跑结果：`,
+        ``,
+        `- 当前 Taiji DataSource 数: ${dry.total_data_sources_before}`,
+        `- 将保留的 DS id: ${dry.kept_data_source_id}`,
+        `- 将删除孤儿 DataSource: ${dry.orphan_data_sources_removed}`,
+        `- 将删除孤儿 CloudAccount: ~${dry.orphan_cloud_accounts_removed}`,
+        `- 将删除的重复 billing 行: ${dry.billing_rows_deleted_as_dup}`,
+        `- 重定向到保留 DS 的 billing 行: ${dry.billing_rows_reassigned_to_kept}`,
+        `- 需要 repoint 的 Project: ${dry.projects_repointed}`,
+        ``,
+        `继续执行真改库？此操作不可撤销。`,
+      ]
+      if (!confirm(lines.join("\n"))) return
+      const real = await accountsApi.taijiCleanupDuplicates({
+        supply_source_id: selectedGroup.supplySourceId,
+        dry_run: false,
+      })
+      // dashboard 读的是 billing_daily_summary 预聚合表；清理只动了 billing_summary
+      // 原始表，预聚合还停留在旧的 N× 放大的数字。完成清理后立刻刷一次。
+      let refreshNote = ""
+      try {
+        const rs = await syncApi.refreshSummary()
+        refreshNote = `\n预聚合表已刷新：${rs.refreshed_range ?? rs.reason ?? "ok"}`
+      } catch (e) {
+        refreshNote = `\n⚠ 预聚合刷新失败，请到 /accounts 之外重试或联系运维：${e instanceof Error ? e.message : e}`
+      }
+      alert(
+        `清理完成：删 ${real.billing_rows_deleted_as_dup} 行重复 billing，` +
+        `${real.orphan_data_sources_removed} 个孤儿 DS / ${real.orphan_cloud_accounts_removed} 个孤儿 CA，` +
+        `${real.projects_repointed} 个 Project 重定向到 DS#${real.kept_data_source_id}` +
+        refreshNote,
+      )
+      await load()
+    } catch (e) {
+      alert(`清理失败：${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setTaijiCleanupRunning(false)
+    }
+  }, [selectedGroup, load])
+
+  // 按 visible_providers 过滤树数据：cloud_<provider> 用户只看本云的货源/主体；
+  // admin/ops (visibleProviders === null) 看全量。后端已对 /supply-sources/all 等
+  // 做同样过滤，这里是 UI 防御层 + 减少老缓存/管理员模拟视图的混乱。
+  const visibleSources = useMemo(() => {
+    if (!visibleProviders) return sources
+    return sources.filter((s) => visibleProviders.includes(s.provider))
+  }, [sources, visibleProviders])
+  const visibleEntities = useMemo(() => {
+    if (!visibleProviders) return entities
+    const provOf = new Map(sources.map((s) => [s.id, s.provider]))
+    return entities.filter((e) => {
+      const p = e.provider ?? provOf.get(e.supply_source_id)
+      return p ? visibleProviders.includes(p) : false
+    })
+  }, [entities, sources, visibleProviders])
+
+  const tree = useMemo(
+    () => buildTree(accounts, visibleSources, visibleEntities),
+    [accounts, visibleSources, visibleEntities],
+  )
+
+  // 选中节点的过滤：货源必匹配；
+  // - Taiji + username 指定 → 按 external_project_id 前缀过滤
+  // - 否则带 entityId → 按 entity_id 过滤（null=未分配）
+  // - 都没带 → 货源下全部账号
   const groupAccounts = useMemo(() => {
     if (!selectedGroup) return []
-    return accounts.filter((a) => a.supply_source_id === selectedGroup.supplySourceId)
+    const inSrc = accounts.filter((a) => a.supply_source_id === selectedGroup.supplySourceId)
+    if (selectedGroup.username !== undefined) {
+      return inSrc.filter((a) => _extractTaijiUsername(a.external_project_id) === selectedGroup.username)
+    }
+    if (selectedGroup.entityId === undefined) return inSrc
+    if (selectedGroup.entityId === null) return inSrc.filter((a) => a.entity_id == null)
+    return inSrc.filter((a) => a.entity_id === selectedGroup.entityId)
   }, [accounts, selectedGroup])
+
+  // ─── 搜索：跨字段、按 selectedGroup 自动 scope ─────────────────
+  // - 输入框始终可见。无 selectedGroup 时全局搜；有 selectedGroup 时仅在该节点内搜。
+  // - 命中字段：name / external_project_id / supplier_name / entity_name / customer_codes[]
+  // - 命中即并集，case-insensitive。
+  const [searchQuery, setSearchQuery] = useState("")
+  const searchTrimmed = searchQuery.trim()
+  const isSearching = searchTrimmed.length > 0
+  // View mode: "cards" shows account cards for selected group, "detail" shows single account.
+  // 搜索时强制走 cards：搜索结果优先于"已选某账号详情"，避免误把搜索 hit 当成详情上下文。
+  const viewMode = selectedId && detail && !isSearching ? "detail" : "cards"
+  /** 搜索时的"候选池"：有 selectedGroup → groupAccounts；否则 → 全部可见账号 */
+  const searchScopeAccounts = useMemo(
+    () => (selectedGroup ? groupAccounts : accounts),
+    [selectedGroup, groupAccounts, accounts],
+  )
+  const searchResults = useMemo(() => {
+    if (!isSearching) return searchScopeAccounts
+    const q = searchTrimmed.toLowerCase()
+    return searchScopeAccounts.filter((a) => {
+      if ((a.name || "").toLowerCase().includes(q)) return true
+      if ((a.external_project_id || "").toLowerCase().includes(q)) return true
+      if ((a.supplier_name || "").toLowerCase().includes(q)) return true
+      if ((a.entity_name || "").toLowerCase().includes(q)) return true
+      if ((a.customer_codes || []).some((c) => (c || "").toLowerCase().includes(q))) return true
+      return false
+    })
+  }, [searchScopeAccounts, isSearching, searchTrimmed])
+
+  /** 右侧实际显示的账号列表：
+   *  - 搜索中：searchResults（已 scope）
+   *  - 否则有 selectedGroup：groupAccounts
+   *  - 否则：空（左侧提示语兜底） */
+  const displayedAccounts = useMemo(() => {
+    if (isSearching) return searchResults
+    if (selectedGroup) return groupAccounts
+    return [] as ServiceAccount[]
+  }, [isSearching, searchResults, selectedGroup, groupAccounts])
 
   // ─── 服务账号分页(client-side):每页 N 张卡片 ────────────────
   const [accountsPage, setAccountsPage] = useState(1)
   const [accountsPageSize, setAccountsPageSize] = useState(24)
-  const accountsTotalPages = Math.max(1, Math.ceil(groupAccounts.length / accountsPageSize))
+  const accountsTotalPages = Math.max(1, Math.ceil(displayedAccounts.length / accountsPageSize))
   const pagedAccounts = useMemo(() => {
     const start = (accountsPage - 1) * accountsPageSize
-    return groupAccounts.slice(start, start + accountsPageSize)
-  }, [groupAccounts, accountsPage, accountsPageSize])
+    return displayedAccounts.slice(start, start + accountsPageSize)
+  }, [displayedAccounts, accountsPage, accountsPageSize])
+
+  // 查询/scope 改变时回到第 1 页
+  useEffect(() => {
+    setAccountsPage(1)
+  }, [searchTrimmed, selectedGroup])
 
   const handleSelectGroup = (supplierName: string, supplySourceId: number, provider: string) => {
     setSelectedGroup({ supplierName, supplySourceId, provider })
     setSelectedId(null); setDetail(null); setShowCreds(false); setCreds(null)
     setBulkSelectedIds(new Set())  // 切货源时清空批量选择
     setAccountsPage(1)              // 切货源时回到第 1 页
+  }
+
+  const handleSelectEntity = (
+    supplierName: string,
+    supplySourceId: number,
+    provider: string,
+    entityId: number | null,
+    entityName: string | null,
+  ) => {
+    setSelectedGroup({ supplierName, supplySourceId, provider, entityId, entityName })
+    setSelectedId(null); setDetail(null); setShowCreds(false); setCreds(null)
+    setBulkSelectedIds(new Set())
+    setAccountsPage(1)
+  }
+
+  const handleSelectUser = (
+    supplierName: string,
+    supplySourceId: number,
+    provider: string,
+    username: string,
+  ) => {
+    setSelectedGroup({ supplierName, supplySourceId, provider, username })
+    setSelectedId(null); setDetail(null); setShowCreds(false); setCreds(null)
+    setBulkSelectedIds(new Set())
+    setAccountsPage(1)
   }
 
   // ─── 批量分配服务账号到另一个货源 ─────────────────────
@@ -1011,6 +1674,87 @@ export default function AccountsPage() {
     }
   }
 
+  // ─── 批量分配服务账号到主体（同一货源内） ─────────────────
+  // selectedGroup 一定存在（界面才看得到批量按钮），且 bulkSelectedIds 只在切货源时清空，
+  // 所以这里的目标主体下拉只列「当前货源 supply_source_id」下的主体。
+  const [bulkEntityDialogOpen, setBulkEntityDialogOpen] = useState(false)
+  /** "" = 未选；ENTITY_SELECT_UNASSIGNED = 清空主体；其他 = entity id */
+  const [bulkTargetEntityId, setBulkTargetEntityId] = useState<string>("")
+  const [bulkEntitySubmitting, setBulkEntitySubmitting] = useState(false)
+
+  const bulkEntityCandidates = useMemo(() => {
+    if (!selectedGroup) return [] as EntityItem[]
+    return entities
+      .filter((e) => e.supply_source_id === selectedGroup.supplySourceId)
+      .sort((a, b) => (a.name || "").localeCompare(b.name || "", "zh-CN"))
+  }, [entities, selectedGroup])
+
+  const openBulkEntityDialog = () => {
+    setBulkTargetEntityId("")
+    setBulkEntityDialogOpen(true)
+  }
+
+  const submitBulkAssignEntity = async () => {
+    if (!bulkTargetEntityId || bulkSelectedIds.size === 0) return
+    const targetEntityId =
+      bulkTargetEntityId === ENTITY_SELECT_UNASSIGNED ? null : Number(bulkTargetEntityId)
+    setBulkEntitySubmitting(true)
+    try {
+      const r = await accountsApi.bulkAssignEntity({
+        account_ids: Array.from(bulkSelectedIds),
+        target_entity_id: targetEntityId,
+      })
+      const target = r.target_entity_name ?? "未分配主体"
+      let msg = `已迁移 ${r.moved} 个到「${target}」`
+      if (r.skipped.length > 0) {
+        msg += `；跳过 ${r.skipped.length} 个（${r.skipped.map((s) => `#${s.account_id}:${s.reason}`).join("；")}）`
+      }
+      alert(msg)
+      setBulkEntityDialogOpen(false)
+      setBulkSelectedIds(new Set())
+      await Promise.all([mutateAccounts(), mutateEntities()])
+    } catch (e) {
+      alert(`批量分配主体失败：${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setBulkEntitySubmitting(false)
+    }
+  }
+
+  // ─── 批量删除服务账号 ─────────────────────
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false)
+  const [bulkDeleting, setBulkDeleting] = useState(false)
+
+  const submitBulkDelete = async () => {
+    if (bulkSelectedIds.size === 0) return
+    setBulkDeleting(true)
+    const ids = Array.from(bulkSelectedIds)
+    try {
+      const results = await Promise.allSettled(ids.map((id) => accountsApi.hardDelete(id)))
+      const failed: { id: number; reason: string }[] = []
+      let ok = 0
+      results.forEach((r, i) => {
+        if (r.status === "fulfilled") ok += 1
+        else failed.push({ id: ids[i], reason: r.reason instanceof Error ? r.reason.message : String(r.reason) })
+      })
+      let msg = `已删除 ${ok} 个`
+      if (failed.length > 0) {
+        msg += `；失败 ${failed.length} 个（${failed.map((f) => `#${f.id}:${f.reason}`).join("；")}）`
+      }
+      alert(msg)
+      // 若当前详情卡片正是被删的账号，关掉
+      if (selectedId && bulkSelectedIds.has(selectedId)) {
+        setSelectedId(null); setDetail(null); setShowCreds(false); setCreds(null)
+      }
+      setBulkDeleteOpen(false)
+      setBulkSelectedIds(new Set())
+      await mutateAccounts()
+    } catch (e) {
+      alert(`批量删除失败：${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setBulkDeleting(false)
+    }
+  }
+
   const handleBackToCards = () => {
     setSelectedId(null); setDetail(null); setShowCreds(false); setCreds(null)
   }
@@ -1072,6 +1816,7 @@ export default function AccountsPage() {
   const emptyForm = () => ({
     supplier_id: "",
     supply_source_id: "",
+    entity_id: "",
     name: "",
     external_project_id: "",
     secret_json: "",
@@ -1081,6 +1826,7 @@ export default function AccountsPage() {
     azure_client_id: "",
     azure_client_secret: "",
     azure_json: "",
+    taiji_blob_sas_url: "",
   })
 
   const handleCreate = async () => {
@@ -1089,6 +1835,30 @@ export default function AccountsPage() {
       const ssid = Number(form.supply_source_id)
       if (!form.supplier_id || !ssid) {
         alert("请选择供应商与云（货源）")
+        return
+      }
+
+      // Taiji 走后端自动发现路径：前端零输入，后端从 settings.TAIJI_BLOB_SAS_URL
+      // 自动拉最新快照、抽 (username, token) 批量建账号；secret_data 落入 sas_url
+      if (formProvider === "taiji") {
+        try {
+          const r = await accountsApi.taijiFromBlob({
+            supply_source_id: ssid,
+            entity_id: form.entity_id ? Number(form.entity_id) : null,
+          })
+          let msg = `Taiji 自动建账号：从 ${r.snapshot_date ?? "?"} 快照拉到 ${r.total_parsed} 个 (username:token)，新建 ${r.created} 个 / 跳过 ${r.skipped.length} 个`
+          if (r.skipped.length > 0) {
+            msg += `\n跳过示例：${r.skipped.slice(0, 3).map((s) => `${s.external_project_id}(${s.reason})`).join("；")}`
+          }
+          alert(msg)
+        } catch (e) {
+          alert(`Taiji 自动建账号失败：${e instanceof Error ? e.message : e}`)
+          return
+        }
+        setCreateOpen(false)
+        setCreateCredMode("fields")
+        setForm(emptyForm())
+        await load()
         return
       }
 
@@ -1166,8 +1936,10 @@ export default function AccountsPage() {
           return
         }
       }
+      // Taiji 走 bulk-import 早退出，此处不会再到 taiji 分支
       await accountsApi.create({
         supply_source_id: ssid,
+        entity_id: form.entity_id ? Number(form.entity_id) : null,
         name: form.name,
         external_project_id: external_id,
         secret_data,
@@ -1249,6 +2021,7 @@ export default function AccountsPage() {
     const base = {
       supplier_id: String(detail.supplier_id),
       supply_source_id: String(detail.supply_source_id),
+      entity_id: detail.entity_id != null ? String(detail.entity_id) : "",
       name: detail.name,
       external_project_id: detail.external_project_id,
       secret_json: "",
@@ -1259,6 +2032,7 @@ export default function AccountsPage() {
       azure_client_secret: "",
       azure_json: "",
     }
+    editOriginalEntityRef.current = detail.entity_id ?? null
     editAzureCredsRef.current = null
     if (detail.provider === "azure") {
       try {
@@ -1310,6 +2084,19 @@ export default function AccountsPage() {
           base.secret_json = JSON.stringify(sj, null, 2)
         }
       } catch { /* 留空 */ }
+    } else if (detail.provider === "taiji") {
+      try {
+        const c = (await accountsApi.credentials(detail.id)) as Record<string, unknown>
+        base.secret_json = JSON.stringify(
+          {
+            api_base: String(c.api_base ?? ""),
+            access_token: String(c.access_token ?? ""),
+            admin_user_id: String(c.admin_user_id ?? detail.external_project_id ?? ""),
+          },
+          null,
+          2,
+        )
+      } catch { /* 留空 */ }
     }
     setEditCredMode("fields")
     setEditForm(base)
@@ -1333,6 +2120,18 @@ export default function AccountsPage() {
       }
       if (newSsid !== detail.supply_source_id) {
         payload.supply_source_id = newSsid
+        // 货源切换时后端会自动清主体，前端这一步无需再发 entity_id；
+        // 如果用户在切换后又选了目标货源下的主体，下面 entity diff 逻辑会再补发。
+      }
+      // entity_id diff：与原始值对比；若仅切货源未变主体选择，则保留默认 = ""（与原始一致才不发）
+      const origEntity = editOriginalEntityRef.current
+      const formEntity = editForm.entity_id ? Number(editForm.entity_id) : null
+      if (formEntity !== origEntity || newSsid !== detail.supply_source_id) {
+        if (formEntity == null) {
+          if (origEntity != null) payload.clear_entity = true
+        } else {
+          payload.entity_id = formEntity
+        }
       }
       if (editProvider === "azure") {
         let merged: { tenant_id: string; client_id: string; client_secret: string; subscription_id: string }
@@ -1378,6 +2177,15 @@ export default function AccountsPage() {
             alert(e instanceof Error ? e.message : "GCP 配置无效")
             return
           }
+        } else if (editProvider === "taiji") {
+          try {
+            const p = parseTaijiCredentialJson(editForm.secret_json)
+            payload.external_project_id = p.external_id
+            payload.secret_data = p.secret_data
+          } catch (e) {
+            alert(e instanceof Error ? e.message : "Taiji 配置无效")
+            return
+          }
         } else {
           payload.secret_data = JSON.parse(editForm.secret_json)
         }
@@ -1390,9 +2198,14 @@ export default function AccountsPage() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-4rem)] gap-0">
+    <div className="flex h-[calc(100vh-4rem)] gap-0 overflow-hidden">
       {/* ─── Left: Tree Panel ─── */}
-      <div className="w-80 border-r border-border flex flex-col bg-card/50">
+      {/* h-full + min-h-0 保证整个 sidebar 严格不超出 flex 父容器；
+          内部 ScrollArea/overflow div 才能正确局部滚动 */}
+      <div
+        className="shrink-0 flex flex-col bg-card/50 h-full min-h-0"
+        style={{ width: sidebarWidth }}
+      >
         <div className="flex items-center justify-between p-4 border-b border-border">
           <h2 className="text-sm font-semibold text-foreground">货源列表</h2>
           <div className="flex items-center gap-1">
@@ -1439,6 +2252,8 @@ export default function AccountsPage() {
                         setForm((f) => ({
                           ...f,
                           supply_source_id: v,
+                          // 切货源 → 主体清空（主体绑定具体货源）
+                          entity_id: v !== f.supply_source_id ? "" : f.entity_id,
                           ...(prov && prov !== "azure" ? { order_method: "" } : {}),
                         }))
                       }}
@@ -1455,55 +2270,83 @@ export default function AccountsPage() {
                     </Select>
                   </div>
                 </div>
+                <div className="space-y-2">
+                  <Label className="text-xs">主体（可选）</Label>
+                  <Select
+                    value={form.entity_id || ENTITY_SELECT_UNASSIGNED}
+                    onValueChange={(v) =>
+                      setForm((f) => ({ ...f, entity_id: v === ENTITY_SELECT_UNASSIGNED ? "" : v }))
+                    }
+                    disabled={!form.supply_source_id}
+                  >
+                    <SelectTrigger className={cn("h-9", CTRL_SURFACE)}>
+                      <SelectValue placeholder={form.supply_source_id ? "选择主体（默认未分配）" : "请先选云"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={ENTITY_SELECT_UNASSIGNED}>{UNASSIGNED_ENTITY_LABEL}</SelectItem>
+                      {entitiesForCreateSource.map((e) => (
+                        <SelectItem key={e.id} value={String(e.id)}>{e.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {form.supply_source_id && canManageEntityProvider(formSourcesForSupplier.find((s) => String(s.id) === form.supply_source_id)?.provider ?? "") && (
+                    <p className="text-[10px] text-muted-foreground">
+                      在左侧树「{PROVIDER_LABELS[formSourcesForSupplier.find((s) => String(s.id) === form.supply_source_id)?.provider ?? ""] ?? ""}」行尾的「+」按钮可新增主体。
+                    </p>
+                  )}
+                </div>
                 {sources.length === 0 && (
                   <p className="text-xs text-muted-foreground">请先在「供应商管理」中创建供应商并添加货源。</p>
                 )}
-                <div className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5 space-y-2">
-                  <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">云管信息</p>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div className="space-y-1.5 min-w-0">
-                      <Label className="text-xs">显示名称</Label>
-                      <Input
-                        className={cn("h-9", CTRL_SURFACE)}
-                        placeholder={formProvider === "azure" ? "租户名称或展示名称" : "在云管中展示的名称"}
-                        value={form.name}
-                        onChange={(e) => setForm({ ...form, name: e.target.value })}
-                      />
+                {/* Taiji 走批量导入路径：账号名称由 token_name 自动派生，云管信息无意义；其他云保留 */}
+                {formProvider !== "taiji" && (
+                  <div className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5 space-y-2">
+                    <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">云管信息</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="space-y-1.5 min-w-0">
+                        <Label className="text-xs">显示名称</Label>
+                        <Input
+                          className={cn("h-9", CTRL_SURFACE)}
+                          placeholder={formProvider === "azure" ? "租户名称或展示名称" : "在云管中展示的名称"}
+                          value={form.name}
+                          onChange={(e) => setForm({ ...form, name: e.target.value })}
+                        />
+                      </div>
+                      <div className="space-y-1.5 min-w-0">
+                        <Label className="text-xs text-muted-foreground">备注</Label>
+                        <Input
+                          className={cn("h-9", CTRL_SURFACE)}
+                          placeholder="可选"
+                          value={form.notes}
+                          onChange={(e) => setForm({ ...form, notes: e.target.value })}
+                        />
+                      </div>
                     </div>
-                    <div className="space-y-1.5 min-w-0">
-                      <Label className="text-xs text-muted-foreground">备注</Label>
-                      <Input
-                        className={cn("h-9", CTRL_SURFACE)}
-                        placeholder="可选"
-                        value={form.notes}
-                        onChange={(e) => setForm({ ...form, notes: e.target.value })}
-                      />
-                    </div>
+                    {formProvider === "azure" && (
+                      <div className="space-y-1.5 max-w-md">
+                        <Label className="text-xs text-muted-foreground">下单方式（Azure）</Label>
+                        <Select
+                          value={form.order_method || ORDER_METHOD_SELECT_SENTINEL}
+                          onValueChange={(v) =>
+                            setForm({ ...form, order_method: v === ORDER_METHOD_SELECT_SENTINEL ? "" : v })
+                          }
+                        >
+                          <SelectTrigger className={cn("h-9 w-full", CTRL_SURFACE)}>
+                            <SelectValue placeholder="选择下单方式" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value={ORDER_METHOD_SELECT_SENTINEL}>未选择</SelectItem>
+                            {ORDER_METHOD_OPTIONS.map((opt) => (
+                              <SelectItem key={opt} value={opt}>
+                                {opt}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
                   </div>
-                  {formProvider === "azure" && (
-                    <div className="space-y-1.5 max-w-md">
-                      <Label className="text-xs text-muted-foreground">下单方式（Azure）</Label>
-                      <Select
-                        value={form.order_method || ORDER_METHOD_SELECT_SENTINEL}
-                        onValueChange={(v) =>
-                          setForm({ ...form, order_method: v === ORDER_METHOD_SELECT_SENTINEL ? "" : v })
-                        }
-                      >
-                        <SelectTrigger className={cn("h-9 w-full", CTRL_SURFACE)}>
-                          <SelectValue placeholder="选择下单方式" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value={ORDER_METHOD_SELECT_SENTINEL}>未选择</SelectItem>
-                          {ORDER_METHOD_OPTIONS.map((opt) => (
-                            <SelectItem key={opt} value={opt}>
-                              {opt}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  )}
-                </div>
+                )}
                 <CredentialSection
                   provider={formProvider}
                   mode={createCredMode}
@@ -1519,6 +2362,8 @@ export default function AccountsPage() {
                   azureJson={form.azure_json}
                   onAzurePatch={(p) => setForm((f) => ({ ...f, ...p }))}
                   onAzureJsonChange={(v) => setForm({ ...form, azure_json: v })}
+                  taijiBlobSasUrl={form.taiji_blob_sas_url}
+                  onTaijiBlobSasUrlChange={(v) => setForm({ ...form, taiji_blob_sas_url: v })}
                   inviteSection={
                     <AzureInviteSection
                       accountName={form.name}
@@ -1534,7 +2379,9 @@ export default function AccountsPage() {
                 <Button
                   onClick={handleCreate}
                   disabled={
-                    !form.supplier_id || !form.supply_source_id || !form.name?.trim() || actionLoading === "create"
+                    !form.supplier_id || !form.supply_source_id || actionLoading === "create"
+                    // Taiji 走 bulk-import 不需要 form.name；其他云仍要求 name 必填
+                    || (formProvider !== "taiji" && !form.name?.trim())
                     || (formProvider === "azure" && createCredMode === "invite" && (
                       !inviteState.invite
                       || inviteState.invite.status !== "consumed"
@@ -1570,6 +2417,7 @@ export default function AccountsPage() {
                         return true
                       }
                     })())
+                    // Taiji 零输入，只需 supplier_id + supply_source_id（上面的通用条件已经覆盖）
                   }
                 >
                   {actionLoading === "create" && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
@@ -1582,29 +2430,74 @@ export default function AccountsPage() {
           </Dialog>
           </div>
         </div>
-        <ScrollArea className="flex-1">
-          <div className="p-2">
-            {loading ? <p className="text-sm text-muted-foreground text-center py-8">加载中...</p>
-            : tree.length === 0 ? <p className="text-sm text-muted-foreground text-center py-8">暂无账号</p>
-            : tree.map((node) => (
-                <SupplierNode
-                  key={node.supplierName}
-                  node={node}
-                  selectedGroup={selectedGroup}
-                  onSelectGroup={handleSelectGroup}
-                />
-              ))}
-          </div>
-        </ScrollArea>
+        {/* 原生 overflow-y-auto 滚动条 —— shadcn ScrollArea 默认 hover 才显示，
+            用户找货源时不直观；换成浏览器原生滚动条永远可见。
+            flex-1 + min-h-0 是让 flex 子项收缩到 ScrollArea 的关键，
+            否则 ScrollArea 内容会把 sidebar 撑到全高，外层页面跟着滚。 */}
+        <div className="flex-1 min-h-0 overflow-y-auto p-2">
+          {loading ? <p className="text-sm text-muted-foreground text-center py-8">加载中...</p>
+          : tree.length === 0 ? <p className="text-sm text-muted-foreground text-center py-8">暂无账号</p>
+          : tree.map((node) => (
+              <SupplierNode
+                key={node.supplierName}
+                node={node}
+                selectedGroup={selectedGroup}
+                onSelectGroup={handleSelectGroup}
+                onSelectEntity={handleSelectEntity}
+                onSelectUser={handleSelectUser}
+                canManageEntityProvider={canManageEntityProvider}
+                onCreateEntity={openCreateEntity}
+                onEditEntity={openEditEntity}
+                onDeleteEntity={handleDeleteEntity}
+              />
+            ))}
+        </div>
       </div>
+
+      {/* 拖拽手柄：替代原 border-r，鼠标 hover 高亮 + 拖动调宽度 */}
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        title="拖动调整列表宽度"
+        onMouseDown={onSidebarDragStart}
+        className="w-1 bg-border hover:bg-primary/60 active:bg-primary cursor-col-resize transition-colors shrink-0 select-none"
+      />
 
       {/* ─── Right Panel ─── */}
       <div className="flex-1 overflow-y-auto">
-        {!selectedGroup ? (
-          <div className="flex items-center justify-center h-full text-muted-foreground">
-            <div className="text-center"><FolderOpen className="w-12 h-12 mx-auto mb-4 opacity-30" /><p>选择左侧供应商查看货源</p></div>
+        {/* ─── 顶部搜索栏：始终可见。selectedGroup 决定 scope（无则全局）
+              主题：与左侧货源列表统一用 bg-card/50 半透明卡片色 + backdrop-blur，
+              避免 bg-background/95 在暗色主题下变成"黑一坨"突兀块。 */}
+        <div className="sticky top-0 z-20 bg-card/50 backdrop-blur-md px-6 pt-4 pb-3 border-b border-border">
+          <div className="relative max-w-2xl">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+            <Input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Escape") setSearchQuery("") }}
+              placeholder={
+                selectedGroup
+                  ? `在「${selectedGroup.supplierName} / ${PROVIDER_LABELS[selectedGroup.provider] ?? selectedGroup.provider.toUpperCase()}${selectedGroup.username !== undefined ? ` / 用户 ${selectedGroup.username}` : ""}${selectedGroup.entityId !== undefined ? ` / ${selectedGroup.entityName ?? UNASSIGNED_ENTITY_LABEL}` : ""}」内搜索服务账号...`
+                  : "全局搜索：账号名 / 项目 ID / 供应商 / 主体 / 客户编号..."
+              }
+              // 用 Input 自身默认的 transparent + dark:bg-input/30 透明效果，
+              // 不叠加 CTRL_SURFACE（那个是给弹窗用的更深底色，整块黑会跟左侧不协调）
+              className="pl-9 pr-9 h-9 border-border/60"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent"
+                title="清空搜索 (Esc)"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
-        ) : viewMode === "detail" && detail ? (
+        </div>
+
+        {(viewMode === "detail" && detail) ? (
           /* ─── Detail View ─── */
           <div className="p-6 space-y-6">
             <div className="flex items-center gap-3">
@@ -1802,6 +2695,8 @@ export default function AccountsPage() {
                           setEditForm((f) => ({
                             ...f,
                             supply_source_id: v,
+                            // 货源变了 → 主体必须清空（主体绑定具体货源）
+                            entity_id: v !== f.supply_source_id ? "" : f.entity_id,
                             ...(prov && prov !== "azure" ? { order_method: "" } : {}),
                           }))
                         }}
@@ -1817,6 +2712,26 @@ export default function AccountsPage() {
                         </SelectContent>
                       </Select>
                     </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs">主体（可选）</Label>
+                    <Select
+                      value={editForm.entity_id || ENTITY_SELECT_UNASSIGNED}
+                      onValueChange={(v) =>
+                        setEditForm((f) => ({ ...f, entity_id: v === ENTITY_SELECT_UNASSIGNED ? "" : v }))
+                      }
+                      disabled={!editForm.supply_source_id}
+                    >
+                      <SelectTrigger className={cn("h-9", CTRL_SURFACE)}>
+                        <SelectValue placeholder={editForm.supply_source_id ? "选择主体（默认未分配）" : "请先选云"} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={ENTITY_SELECT_UNASSIGNED}>{UNASSIGNED_ENTITY_LABEL}</SelectItem>
+                        {entitiesForEditSource.map((e) => (
+                          <SelectItem key={e.id} value={String(e.id)}>{e.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                   <div className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5 space-y-2">
                     <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">云管信息</p>
@@ -1942,37 +2857,155 @@ export default function AccountsPage() {
             <div className="flex items-center justify-between mb-6">
               <div>
                 <div className="flex items-start gap-2">
-                  <img src={`/${selectedGroup.provider}.svg`} alt={selectedGroup.provider} className="w-6 h-6 shrink-0 mt-0.5" />
-                  <div>
-                    <h2 className="text-lg font-semibold text-foreground leading-tight">{selectedGroup.supplierName}</h2>
-                    <p className="text-sm text-muted-foreground mt-0.5">{PROVIDER_LABELS[selectedGroup.provider] ?? selectedGroup.provider.toUpperCase()}</p>
-                  </div>
+                  {selectedGroup ? (
+                    <>
+                      <img src={`/${selectedGroup.provider}.svg`} alt={selectedGroup.provider} className="w-6 h-6 shrink-0 mt-0.5" />
+                      <div>
+                        <h2 className="text-lg font-semibold text-foreground leading-tight">{selectedGroup.supplierName}</h2>
+                        <p className="text-sm text-muted-foreground mt-0.5">
+                          {PROVIDER_LABELS[selectedGroup.provider] ?? selectedGroup.provider.toUpperCase()}
+                          {selectedGroup.username !== undefined && (
+                            <>
+                              <span className="mx-1.5 text-muted-foreground/60">/</span>
+                              <span>用户 {selectedGroup.username}</span>
+                            </>
+                          )}
+                          {selectedGroup.entityId !== undefined && (
+                            <>
+                              <span className="mx-1.5 text-muted-foreground/60">/</span>
+                              <span className={selectedGroup.entityId === null ? "italic" : ""}>
+                                {selectedGroup.entityName ?? UNASSIGNED_ENTITY_LABEL}
+                              </span>
+                            </>
+                          )}
+                        </p>
+                      </div>
+                    </>
+                  ) : (
+                    // 无 selectedGroup：搜索模式（isSearching=true）或初始空闲状态
+                    <div className="flex items-center gap-2">
+                      <Search className="w-5 h-5 text-muted-foreground" />
+                      <div>
+                        <h2 className="text-lg font-semibold text-foreground leading-tight">
+                          {isSearching ? "全局搜索" : "请选择左侧节点"}
+                        </h2>
+                        <p className="text-sm text-muted-foreground mt-0.5">
+                          {isSearching ? "跨货源 / 主体匹配" : "或在上方搜索框中输入"}
+                        </p>
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <p className="text-sm text-muted-foreground mt-2">{groupAccounts.length} 个服务账号</p>
+                {(selectedGroup || isSearching) && (
+                  <div className="flex items-center gap-3 mt-2">
+                    <p className="text-sm text-muted-foreground">{displayedAccounts.length} 个服务账号{isSearching && ` · 匹配「${searchTrimmed}」`}</p>
+                    {/* Azure 货源 + cloud_admin/ops/cloud_azure：同步订阅名称按钮
+                        从 ARM 拉每个 SP 可见订阅的 displayName，更新本地 Project.name */}
+                    {selectedGroup?.provider === "azure" && canManageEntityProvider("azure") && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 text-xs gap-1"
+                        onClick={handleAzureSyncSubscriptionNames}
+                        disabled={azureSyncSubRunning}
+                        title="调用 Azure ARM API 拉取所有可见订阅的 displayName，更新本地服务账号显示名"
+                      >
+                        {azureSyncSubRunning ? <Loader2 className="w-3 h-3 animate-spin" /> : <Clock className="w-3 h-3" />}
+                        同步订阅名称
+                      </Button>
+                    )}
+                    {/* Taiji 货源 + cloud_admin 才显示「清理重复数据」按钮，用于修复
+                        历史"每账号一个独立 CA/DS"导致的 billing 行 N× 放大。一次性操作。 */}
+                    {selectedGroup?.provider === "taiji" && isCloudAdmin && (
+                      <>
+                        <input
+                          ref={taijiFileInputRef}
+                          type="file"
+                          accept=".json,application/json"
+                          multiple
+                          className="hidden"
+                          onChange={(e) => handleTaijiFileUpload(e.target.files)}
+                        />
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-xs gap-1"
+                          onClick={() => taijiFileInputRef.current?.click()}
+                          disabled={taijiUploadRunning || taijiSyncRunning || taijiCleanupRunning}
+                          title="直接选本地 30 个日快照 JSON 文件，浏览器读完逐个 POST 入库；完全绕过 Azure Blob"
+                        >
+                          {taijiUploadRunning ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+                          直传 JSON
+                          {taijiUploadRunning && taijiUploadStatus && (
+                            <span className="ml-1 text-[10px] text-muted-foreground">· {taijiUploadStatus}</span>
+                          )}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-xs gap-1"
+                          onClick={handleTaijiSyncMonth}
+                          disabled={taijiSyncRunning || taijiCleanupRunning || taijiUploadRunning}
+                          title="按 YYYY-MM 月份触发后台 collector 同步该月份的所有日快照（默认 2026-04，可改）"
+                        >
+                          {taijiSyncRunning ? <Loader2 className="w-3 h-3 animate-spin" /> : <Clock className="w-3 h-3" />}
+                          按月同步
+                          {taijiSyncRunning && taijiSyncStatus && (
+                            <span className="ml-1 text-[10px] text-muted-foreground">· {taijiSyncStatus}</span>
+                          )}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-xs gap-1"
+                          onClick={handleTaijiCleanup}
+                          disabled={taijiCleanupRunning || taijiSyncRunning || taijiUploadRunning}
+                          title="把每账号独立 CA/DS 合并为 supply_source 级共享 CA/DS，去重 billing 行（修复历史数据被 N× 放大）"
+                        >
+                          {taijiCleanupRunning ? <Loader2 className="w-3 h-3 animate-spin" /> : <AlertTriangle className="w-3 h-3" />}
+                          清理重复数据
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
-              {/* 批量分配工具栏：永久可见，无选中时是"提示 + 全选"，有选中时切换成"已选 N + 操作" */}
-              {groupAccounts.length > 0 && (
+              {/* 批量分配工具栏：永久可见，无选中时是"提示 + 全选"，有选中时切换成"已选 N + 操作"。
+                  搜索模式 + 跨货源结果时禁用批量分配/分配主体（仅批量删除允许；后端会按 scope 校验每条）。 */}
+              {displayedAccounts.length > 0 && (
                 bulkSelectedIds.size === 0 ? (
                   <div className="flex items-center gap-2 text-xs text-muted-foreground bg-card/60 border border-dashed border-border rounded-lg px-3 py-2">
-                    <span>💡 勾选左上角方框可批量分配</span>
+                    <span>💡 勾选左上角方框可批量操作</span>
                     <Button
                       size="sm"
                       variant="ghost"
                       className="h-7 text-xs"
-                      onClick={() => setBulkSelectedIds(new Set(groupAccounts.map((a) => a.id)))}
+                      onClick={() => setBulkSelectedIds(new Set(displayedAccounts.map((a) => a.id)))}
                     >
                       全选本页
                     </Button>
                   </div>
                 ) : (
-                  <div className="flex items-center gap-3 bg-card border border-primary/50 rounded-lg px-3 py-2">
+                  <div className="flex items-center gap-3 bg-card border border-primary/50 rounded-lg px-3 py-2 flex-wrap">
                     <span className="text-sm text-foreground">已选 <b className="text-primary">{bulkSelectedIds.size}</b> 个</span>
-                    <Button size="sm" onClick={openBulkDialog}>批量分配到…</Button>
-                    {bulkSelectedIds.size < groupAccounts.length && (
+                    <Button size="sm" onClick={openBulkDialog}>分配货源…</Button>
+                    <Button size="sm" variant="outline" onClick={openBulkEntityDialog}>
+                      <Building2 className="w-4 h-4 mr-1" />
+                      分配主体…
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      onClick={() => setBulkDeleteOpen(true)}
+                    >
+                      <Trash2 className="w-4 h-4 mr-1" />
+                      批量删除
+                    </Button>
+                    {bulkSelectedIds.size < displayedAccounts.length && (
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={() => setBulkSelectedIds(new Set(groupAccounts.map((a) => a.id)))}
+                        onClick={() => setBulkSelectedIds(new Set(displayedAccounts.map((a) => a.id)))}
                       >
                         全选本页
                       </Button>
@@ -1982,8 +3015,19 @@ export default function AccountsPage() {
                 )
               )}
             </div>
-            {groupAccounts.length === 0 ? (
-              <div className="flex items-center justify-center py-20 text-muted-foreground"><div className="text-center"><KeyRound className="w-12 h-12 mx-auto mb-4 opacity-30" /><p>该云货源下暂无服务账号</p></div></div>
+            {displayedAccounts.length === 0 ? (
+              <div className="flex items-center justify-center py-20 text-muted-foreground">
+                <div className="text-center">
+                  {isSearching ? <Search className="w-12 h-12 mx-auto mb-4 opacity-30" /> : <FolderOpen className="w-12 h-12 mx-auto mb-4 opacity-30" />}
+                  <p>
+                    {isSearching
+                      ? `没有匹配「${searchTrimmed}」的服务账号`
+                      : selectedGroup
+                        ? "该云货源下暂无服务账号"
+                        : "请在左侧选择货源 / 主体，或在上方输入搜索词"}
+                  </p>
+                </div>
+              </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                 {pagedAccounts.map((a) => (
@@ -1993,7 +3037,11 @@ export default function AccountsPage() {
                       "bg-card border-border hover:border-primary/50 transition-colors cursor-pointer group",
                       bulkSelectedIds.has(a.id) && "ring-2 ring-primary"
                     )}
-                    onClick={() => loadDetail(a.id)}
+                    onClick={() => {
+                      // 搜索模式点击搜索结果：清空搜索词，否则 viewMode 还停在 cards 看不到详情
+                      if (isSearching) setSearchQuery("")
+                      loadDetail(a.id)
+                    }}
                   >
                     <CardContent className="p-4">
                       <div className="flex items-start justify-between">
@@ -2014,6 +3062,13 @@ export default function AccountsPage() {
                           <div className="min-w-0">
                             <p className="text-sm font-medium text-foreground truncate">{a.name}</p>
                             <p className="text-xs text-muted-foreground truncate">{a.external_project_id}</p>
+                            <p className="text-[11px] text-muted-foreground/70 truncate">
+                              {a.supplier_name}
+                              <span className="mx-1 opacity-60">·</span>
+                              <span className={a.entity_name ? "" : "italic"}>
+                                {a.entity_name ?? UNASSIGNED_ENTITY_LABEL}
+                              </span>
+                            </p>
                           </div>
                         </div>
                         <Badge variant="secondary" className={cn("text-[10px] shrink-0 ml-2", STATUS_MAP[a.status]?.class ?? "")}>{STATUS_MAP[a.status]?.label ?? a.status}</Badge>
@@ -2041,12 +3096,12 @@ export default function AccountsPage() {
             )}
 
             {/* ─── 分页控件 ─── */}
-            {groupAccounts.length > accountsPageSize && (
+            {displayedAccounts.length > accountsPageSize && (
               <div className="flex items-center justify-between gap-3 mt-4 px-1">
                 <div className="text-xs text-muted-foreground">
-                  共 <span className="font-medium text-foreground">{groupAccounts.length}</span> 个 ·
+                  共 <span className="font-medium text-foreground">{displayedAccounts.length}</span> 个 ·
                   当前 <span className="font-medium text-foreground">
-                    {(accountsPage - 1) * accountsPageSize + 1}-{Math.min(accountsPage * accountsPageSize, groupAccounts.length)}
+                    {(accountsPage - 1) * accountsPageSize + 1}-{Math.min(accountsPage * accountsPageSize, displayedAccounts.length)}
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
@@ -2153,6 +3208,148 @@ export default function AccountsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ─── 批量分配主体（仅同一货源内有效） ─── */}
+      <Dialog open={bulkEntityDialogOpen} onOpenChange={(o) => { if (!bulkEntitySubmitting) setBulkEntityDialogOpen(o) }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Building2 className="w-5 h-5" />
+              批量分配主体
+            </DialogTitle>
+            <DialogDescription>
+              将选中的 <b className="text-primary">{bulkSelectedIds.size}</b> 个服务账号
+              {selectedGroup && (
+                <> 在「{selectedGroup.supplierName} / {PROVIDER_LABELS[selectedGroup.provider] ?? selectedGroup.provider.toUpperCase()}」下 </>
+              )}
+              分配到指定主体；跨货源的会被自动跳过。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div>
+              <Label className="text-xs">目标主体</Label>
+              <Select
+                value={bulkTargetEntityId}
+                onValueChange={(v) => setBulkTargetEntityId(v)}
+              >
+                <SelectTrigger className={cn("h-9", CTRL_SURFACE)}>
+                  <SelectValue placeholder="选择主体或「未分配主体」" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ENTITY_SELECT_UNASSIGNED}>{UNASSIGNED_ENTITY_LABEL}（清空主体）</SelectItem>
+                  {bulkEntityCandidates.map((e) => (
+                    <SelectItem key={e.id} value={String(e.id)}>
+                      {e.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {bulkEntityCandidates.length === 0 && (
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  当前货源下还没有主体。先到左侧树「+」按钮新建几个主体后再来分配。
+                </p>
+              )}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBulkEntityDialogOpen(false)} disabled={bulkEntitySubmitting}>取消</Button>
+            <Button
+              onClick={submitBulkAssignEntity}
+              disabled={bulkEntitySubmitting || !bulkTargetEntityId || bulkSelectedIds.size === 0}
+            >
+              {bulkEntitySubmitting ? <><Loader2 className="w-4 h-4 mr-1 animate-spin" />分配中…</> : "确认分配"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ─── 批量删除服务账号 ─── */}
+      <Dialog open={bulkDeleteOpen} onOpenChange={(o) => { if (!bulkDeleting) setBulkDeleteOpen(o) }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <AlertTriangle className="w-5 h-5" />
+              批量删除服务账号
+            </DialogTitle>
+            <DialogDescription>
+              将彻底删除 <b className="text-destructive">{bulkSelectedIds.size}</b> 个服务账号，
+              此操作 <b>不可恢复</b>，并会从数据库中移除相关凭证与历史记录。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-2">
+            <ScrollArea className="max-h-48 rounded border border-border bg-muted/30 p-2">
+              <ul className="text-xs space-y-1 font-mono">
+                {Array.from(bulkSelectedIds).map((id) => {
+                  const a = accounts.find((x) => x.id === id)
+                  return (
+                    <li key={id} className="truncate">
+                      #{id} · {a?.name ?? "—"}{a?.external_project_id ? ` (${a.external_project_id})` : ""}
+                    </li>
+                  )
+                })}
+              </ul>
+            </ScrollArea>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBulkDeleteOpen(false)} disabled={bulkDeleting}>取消</Button>
+            <Button
+              variant="destructive"
+              onClick={submitBulkDelete}
+              disabled={bulkDeleting || bulkSelectedIds.size === 0}
+            >
+              {bulkDeleting ? (
+                <><Loader2 className="w-4 h-4 mr-1 animate-spin" />删除中…</>
+              ) : (
+                <><Trash2 className="w-4 h-4 mr-1" />确认删除 {bulkSelectedIds.size} 个</>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ─── 主体 CRUD（cloud_admin/ops 任意 provider；cloud_<provider> 限本云） ─── */}
+      <Dialog open={entityDialogOpen} onOpenChange={(o) => { if (!entitySubmitting) setEntityDialogOpen(o) }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Building2 className="w-5 h-5" />
+              {entityDialogMode === "create" ? "新增主体" : "编辑主体"}
+            </DialogTitle>
+            <DialogDescription>
+              所属货源：{entityDialogTarget?.supplierName ?? "—"} / {(PROVIDER_LABELS[entityDialogTarget?.provider ?? ""] ?? (entityDialogTarget?.provider ?? "").toUpperCase())}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div>
+              <Label className="text-xs">主体名称 <span className="text-destructive">*</span></Label>
+              <Input
+                className={cn("h-9", CTRL_SURFACE)}
+                value={entityForm.name}
+                onChange={(e) => setEntityForm({ ...entityForm, name: e.target.value })}
+                placeholder="如 某某科技有限公司"
+                maxLength={200}
+              />
+            </div>
+            <div>
+              <Label className="text-xs">备注</Label>
+              <Textarea
+                className={cn(CTRL_SURFACE)}
+                value={entityForm.note}
+                onChange={(e) => setEntityForm({ ...entityForm, note: e.target.value })}
+                placeholder="选填，最多 500 字"
+                maxLength={500}
+                rows={3}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEntityDialogOpen(false)} disabled={entitySubmitting}>取消</Button>
+            <Button onClick={submitEntity} disabled={entitySubmitting || !entityForm.name.trim()}>
+              {entitySubmitting ? <><Loader2 className="w-4 h-4 mr-1 animate-spin" />保存中…</> : "保存"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
@@ -2162,11 +3359,36 @@ export default function AccountsPage() {
 interface TreeCallbacks {
   selectedGroup: SelectedSupplySource | null
   onSelectGroup: (supplierName: string, supplySourceId: number, provider: string) => void
+  onSelectEntity: (
+    supplierName: string,
+    supplySourceId: number,
+    provider: string,
+    entityId: number | null,
+    entityName: string | null,
+  ) => void
+  onSelectUser: (
+    supplierName: string,
+    supplySourceId: number,
+    provider: string,
+    username: string,
+  ) => void
+  /** 该用户能否管理某 provider 下的主体（增/改/删）。admin/ops → 任意 provider。 */
+  canManageEntityProvider: (provider: string) => boolean
+  onCreateEntity: (supplySourceId: number, supplierName: string, provider: string) => void
+  onEditEntity: (entity: { id: number; name: string; note: string | null; supplySourceId: number }) => void
+  onDeleteEntity: (entity: { id: number; name: string; accountCount: number }) => void
 }
 
-function SupplierNode({ node, selectedGroup, onSelectGroup }: { node: SupplierTreeNode } & TreeCallbacks) {
+function SupplierNode({ node, ...rest }: { node: SupplierTreeNode } & TreeCallbacks) {
   const [open, setOpen] = useState(true)
-  const total = node.sources.reduce((s, x) => s + x.accounts.length, 0)
+  // Taiji 走 users 桶（与 entities 镜像内容相同账号集），其他走 entities；
+  // 求总数取任一桶即可
+  const total = node.sources.reduce((s, x) => {
+    if (x.provider === "taiji" && x.users) {
+      return s + x.users.reduce((t, u) => t + u.accounts.length, 0)
+    }
+    return s + x.entities.reduce((t, e) => t + e.accounts.length, 0)
+  }, 0)
   return (
     <div className="mb-1">
       <button type="button" onClick={() => setOpen(!open)} className="flex items-center gap-2 w-full px-2 py-1.5 rounded hover:bg-accent text-sm font-semibold text-foreground">
@@ -2180,8 +3402,7 @@ function SupplierNode({ node, selectedGroup, onSelectGroup }: { node: SupplierTr
           key={src.supplySourceId}
           supplierName={node.supplierName}
           src={src}
-          selectedGroup={selectedGroup}
-          onSelectGroup={onSelectGroup}
+          {...rest}
         />
       ))}
     </div>
@@ -2193,27 +3414,192 @@ function SourceNode({
   src,
   selectedGroup,
   onSelectGroup,
+  onSelectEntity,
+  onSelectUser,
+  canManageEntityProvider,
+  onCreateEntity,
+  onEditEntity,
+  onDeleteEntity,
 }: {
   supplierName: string
-  src: { supplySourceId: number; provider: string; accounts: ServiceAccount[] }
+  src: SourceBucket
 } & TreeCallbacks) {
-  const isSelected = selectedGroup?.supplySourceId === src.supplySourceId
+  const [open, setOpen] = useState(true)
+  const isSelected =
+    selectedGroup?.supplySourceId === src.supplySourceId
+    && selectedGroup?.entityId === undefined
+    && selectedGroup?.username === undefined
   const pl = PROVIDER_LABELS[src.provider] ?? src.provider.toUpperCase()
+  // Taiji 走 users 桶；其他 provider 走 entities 桶
+  const isTaiji = src.provider === "taiji"
+  const total = isTaiji
+    ? (src.users ?? []).reduce((s, u) => s + u.accounts.length, 0)
+    : src.entities.reduce((s, e) => s + e.accounts.length, 0)
+  // Taiji 没有主体 CRUD（按 username 派生分组，不可编辑），所以隐藏「+」按钮
+  const canManage = !isTaiji && canManageEntityProvider(src.provider)
   return (
     <div className="ml-4">
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          onClick={() => setOpen(!open)}
+          className="flex items-center justify-center w-5 h-5 rounded hover:bg-accent text-muted-foreground"
+          aria-label={open ? "折叠" : "展开"}
+        >
+          {open ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+        </button>
+        <button
+          type="button"
+          onClick={() => onSelectGroup(supplierName, src.supplySourceId, src.provider)}
+          className={cn(
+            "flex items-center gap-2 flex-1 px-2 py-1 rounded text-sm",
+            isSelected ? "bg-primary/20 text-primary font-medium" : "text-muted-foreground hover:bg-accent",
+          )}
+        >
+          <img src={`/${src.provider}.svg`} alt={src.provider} className="w-3.5 h-3.5" />
+          <FolderOpen className="w-3.5 h-3.5" />
+          <span>{pl}</span>
+          <span className="ml-auto text-xs">{total}</span>
+        </button>
+        {canManage && (
+          <button
+            type="button"
+            onClick={(ev) => { ev.stopPropagation(); onCreateEntity(src.supplySourceId, supplierName, src.provider) }}
+            title="新增主体"
+            className="w-5 h-5 flex items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+          >
+            <Plus className="w-3.5 h-3.5" />
+          </button>
+        )}
+      </div>
+      {open && (isTaiji ? (src.users ?? []).map((bucket) => (
+        <UserNode
+          key={`u:${bucket.username}`}
+          supplierName={supplierName}
+          supplySourceId={src.supplySourceId}
+          provider={src.provider}
+          bucket={bucket}
+          selectedGroup={selectedGroup}
+          onSelectUser={onSelectUser}
+        />
+      )) : src.entities.map((bucket) => (
+        <EntityNode
+          key={bucket.entityId ?? "__unassigned__"}
+          supplierName={supplierName}
+          supplySourceId={src.supplySourceId}
+          provider={src.provider}
+          bucket={bucket}
+          selectedGroup={selectedGroup}
+          onSelectEntity={onSelectEntity}
+          canManage={canManage}
+          onEditEntity={onEditEntity}
+          onDeleteEntity={onDeleteEntity}
+        />
+      )))}
+    </div>
+  )
+}
+
+/** Taiji 用户节点：和 EntityNode 同级，但不能编辑/删除（username 是 external_project_id 派生的，无独立实体）。 */
+function UserNode({
+  supplierName,
+  supplySourceId,
+  provider,
+  bucket,
+  selectedGroup,
+  onSelectUser,
+}: {
+  supplierName: string
+  supplySourceId: number
+  provider: string
+  bucket: UserBucket
+  selectedGroup: SelectedSupplySource | null
+  onSelectUser: TreeCallbacks["onSelectUser"]
+}) {
+  const isSelected =
+    selectedGroup?.supplySourceId === supplySourceId
+    && selectedGroup?.username === bucket.username
+  return (
+    <div className="ml-6 flex items-center gap-1">
       <button
         type="button"
-        onClick={() => onSelectGroup(supplierName, src.supplySourceId, src.provider)}
+        onClick={() => onSelectUser(supplierName, supplySourceId, provider, bucket.username)}
         className={cn(
-          "flex items-center gap-2 w-full px-2 py-1 rounded text-sm",
+          "flex items-center gap-2 flex-1 px-2 py-1 rounded text-xs",
           isSelected ? "bg-primary/20 text-primary font-medium" : "text-muted-foreground hover:bg-accent",
         )}
+        title={`${bucket.username} · ${bucket.accounts.length} 个密钥`}
       >
-        <img src={`/${src.provider}.svg`} alt={src.provider} className="w-3.5 h-3.5" />
-        <FolderOpen className="w-3.5 h-3.5" />
-        <span>{pl}</span>
-        <span className="ml-auto text-xs">{src.accounts.length}</span>
+        <span className="opacity-70 text-[10px] w-3 text-center">👤</span>
+        <span className="truncate">{bucket.username}</span>
+        <span className="ml-auto text-[10px]">{bucket.accounts.length}</span>
       </button>
+    </div>
+  )
+}
+
+function EntityNode({
+  supplierName,
+  supplySourceId,
+  provider,
+  bucket,
+  selectedGroup,
+  onSelectEntity,
+  canManage,
+  onEditEntity,
+  onDeleteEntity,
+}: {
+  supplierName: string
+  supplySourceId: number
+  provider: string
+  bucket: EntityBucket
+  selectedGroup: SelectedSupplySource | null
+  onSelectEntity: TreeCallbacks["onSelectEntity"]
+  canManage: boolean
+  onEditEntity: TreeCallbacks["onEditEntity"]
+  onDeleteEntity: TreeCallbacks["onDeleteEntity"]
+}) {
+  const isSelected =
+    selectedGroup?.supplySourceId === supplySourceId
+    && selectedGroup?.entityId === bucket.entityId
+  const isUnassigned = bucket.entityId === null
+  const label = bucket.entityName ?? UNASSIGNED_ENTITY_LABEL
+  return (
+    <div className="ml-6 flex items-center gap-1">
+      <button
+        type="button"
+        onClick={() => onSelectEntity(supplierName, supplySourceId, provider, bucket.entityId, bucket.entityName)}
+        className={cn(
+          "flex items-center gap-2 flex-1 px-2 py-1 rounded text-xs",
+          isSelected ? "bg-primary/20 text-primary font-medium" : "text-muted-foreground hover:bg-accent",
+          isUnassigned && "italic",
+        )}
+        title={bucket.note || undefined}
+      >
+        <Building2 className="w-3 h-3 opacity-70" />
+        <span className="truncate">{label}</span>
+        <span className="ml-auto text-[10px]">{bucket.accounts.length}</span>
+      </button>
+      {canManage && !isUnassigned && bucket.entityId !== null && (
+        <>
+          <button
+            type="button"
+            onClick={(ev) => { ev.stopPropagation(); onEditEntity({ id: bucket.entityId!, name: bucket.entityName ?? "", note: bucket.note, supplySourceId }) }}
+            title="编辑主体"
+            className="w-5 h-5 flex items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+          >
+            <Pencil className="w-3 h-3" />
+          </button>
+          <button
+            type="button"
+            onClick={(ev) => { ev.stopPropagation(); onDeleteEntity({ id: bucket.entityId!, name: bucket.entityName ?? "", accountCount: bucket.accounts.length }) }}
+            title="删除主体"
+            className="w-5 h-5 flex items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-red-400"
+          >
+            <Trash2 className="w-3 h-3" />
+          </button>
+        </>
+      )}
     </div>
   )
 }
