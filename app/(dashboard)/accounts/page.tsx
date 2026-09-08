@@ -1,4 +1,5 @@
 "use client"
+import { toast } from "sonner"
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import {
@@ -572,7 +573,7 @@ function AzureInviteSection({
       })
     } catch (e) {
       onStateChange({ starting: false })
-      alert(`生成邀请链接失败: ${e instanceof Error ? e.message : e}`)
+      toast.error(`生成邀请链接失败: ${e instanceof Error ? e.message : e}`)
     }
   }
 
@@ -1166,7 +1167,7 @@ export default function AccountsPage() {
   const submitEntity = async () => {
     if (!entityDialogTarget) return
     const name = entityForm.name.trim()
-    if (!name) { alert("主体名称不能为空"); return }
+    if (!name) { toast.error("主体名称不能为空"); return }
     const note = entityForm.note.trim() || null
     setEntitySubmitting(true)
     try {
@@ -1179,14 +1180,14 @@ export default function AccountsPage() {
       await mutateEntities()
       await mutateAccounts()
     } catch (e) {
-      alert(`保存失败: ${(e as Error).message}`)
+      toast.error(`保存失败: ${(e as Error).message}`)
     } finally {
       setEntitySubmitting(false)
     }
   }
   const handleDeleteEntity = async (e: { id: number; name: string; accountCount: number }) => {
     if (e.accountCount > 0) {
-      alert(`主体「${e.name}」下还有 ${e.accountCount} 个服务账号，先把账号迁出或解绑主体再删除`)
+      toast.error(`主体「${e.name}」下还有 ${e.accountCount} 个服务账号，先把账号迁出或解绑主体再删除`)
       return
     }
     if (!confirm(`确定删除主体「${e.name}」？此操作不可撤销。`)) return
@@ -1199,7 +1200,7 @@ export default function AccountsPage() {
       await mutateEntities()
       await mutateAccounts()
     } catch (err) {
-      alert(`删除失败: ${(err as Error).message}`)
+      toast.error(`删除失败: ${(err as Error).message}`)
     }
   }
 
@@ -1265,7 +1266,7 @@ export default function AccountsPage() {
     const trimmed = m.trim()
     if (!trimmed) return
     if (!/^\d{4}-\d{2}$/.test(trimmed)) {
-      alert("月份格式无效，需要 YYYY-MM，如 2026-04")
+      toast.error("月份格式无效，需要 YYYY-MM，如 2026-04")
       return
     }
     setTaijiSyncRunning(true)
@@ -1292,7 +1293,7 @@ export default function AccountsPage() {
         (r as { task_id?: string }).task_id ??
         ((r as unknown as { task_ids?: string[] }).task_ids?.[0] ?? null)
       if (!outerTid) {
-        alert(`同步已分发，但响应里无 task_id：${JSON.stringify(r)}`)
+        toast.error(`同步已分发，但响应里无 task_id：${JSON.stringify(r)}`)
         return
       }
 
@@ -1309,7 +1310,7 @@ export default function AccountsPage() {
       })()
 
       if (outer.status !== "SUCCESS" || innerIds.length === 0) {
-        alert(
+        toast.error(
           `${trimmed} 月份外层任务终态: ${outer.status}\n` +
           `result: ${JSON.stringify(outer.result).slice(0, 800)}\n` +
           (innerIds.length === 0 ? "（无内层 task_ids，可能该月无 Taiji DS 可同步）" : ""),
@@ -1327,14 +1328,14 @@ export default function AccountsPage() {
       const timeoutCnt = innerResults.filter((x) => x.status === "TIMEOUT").length
 
       const sampleResult = innerResults[0]?.result
-      alert(
+      toast.error(
         `${trimmed} 月份同步完成：\n\n` +
         `内层任务 ${innerIds.length} 个 → SUCCESS ${okCnt} / FAILURE ${failCnt} / TIMEOUT ${timeoutCnt}\n\n` +
         `首个内层 result: ${sampleResult ? JSON.stringify(sampleResult).slice(0, 600) : "(空)"}`,
       )
       await load()
     } catch (e) {
-      alert(`触发同步失败：${e instanceof Error ? e.message : String(e)}`)
+      toast.error(`触发同步失败：${e instanceof Error ? e.message : String(e)}`)
     } finally {
       setTaijiSyncRunning(false)
     }
@@ -1389,7 +1390,7 @@ export default function AccountsPage() {
         for (const f of failed.slice(0, 5)) lines.push(`  - ${f}`)
         if (failed.length > 5) lines.push(`  ... 还有 ${failed.length - 5} 个失败`)
       }
-      alert(lines.join("\n"))
+      toast.error(lines.join("\n"))
       await load()
     } finally {
       setTaijiUploadRunning(false)
@@ -1427,10 +1428,10 @@ export default function AccountsPage() {
         lines.push("", "API 错误:")
         for (const e of r.api_errors.slice(0, 3)) lines.push(`  - ${e}`)
       }
-      alert(lines.join("\n"))
+      toast.error(lines.join("\n"))
       await load()
     } catch (e) {
-      alert(`同步失败：${e instanceof Error ? e.message : String(e)}`)
+      toast.error(`同步失败：${e instanceof Error ? e.message : String(e)}`)
     } finally {
       setAzureSyncSubRunning(false)
     }
@@ -1472,7 +1473,7 @@ export default function AccountsPage() {
       } catch (e) {
         refreshNote = `\n⚠ 预聚合刷新失败，请到 /accounts 之外重试或联系运维：${e instanceof Error ? e.message : e}`
       }
-      alert(
+      toast.error(
         `清理完成：删 ${real.billing_rows_deleted_as_dup} 行重复 billing，` +
         `${real.orphan_data_sources_removed} 个孤儿 DS / ${real.orphan_cloud_accounts_removed} 个孤儿 CA，` +
         `${real.projects_repointed} 个 Project 重定向到 DS#${real.kept_data_source_id}` +
@@ -1480,7 +1481,7 @@ export default function AccountsPage() {
       )
       await load()
     } catch (e) {
-      alert(`清理失败：${e instanceof Error ? e.message : String(e)}`)
+      toast.error(`清理失败：${e instanceof Error ? e.message : String(e)}`)
     } finally {
       setTaijiCleanupRunning(false)
     }
@@ -1662,13 +1663,13 @@ export default function AccountsPage() {
       if (r.skipped.length > 0) {
         msg += `；跳过 ${r.skipped.length} 个（${r.skipped.map((s) => `#${s.account_id}:${s.reason}`).join("；")}）`
       }
-      alert(msg)
+      toast.error(msg)
       setBulkDialogOpen(false)
       setBulkSelectedIds(new Set())
       // 触发账号列表刷新
       await mutateAccounts()
     } catch (e) {
-      alert(`批量分配失败：${e instanceof Error ? e.message : String(e)}`)
+      toast.error(`批量分配失败：${e instanceof Error ? e.message : String(e)}`)
     } finally {
       setBulkSubmitting(false)
     }
@@ -1709,12 +1710,12 @@ export default function AccountsPage() {
       if (r.skipped.length > 0) {
         msg += `；跳过 ${r.skipped.length} 个（${r.skipped.map((s) => `#${s.account_id}:${s.reason}`).join("；")}）`
       }
-      alert(msg)
+      toast.error(msg)
       setBulkEntityDialogOpen(false)
       setBulkSelectedIds(new Set())
       await Promise.all([mutateAccounts(), mutateEntities()])
     } catch (e) {
-      alert(`批量分配主体失败：${e instanceof Error ? e.message : String(e)}`)
+      toast.error(`批量分配主体失败：${e instanceof Error ? e.message : String(e)}`)
     } finally {
       setBulkEntitySubmitting(false)
     }
@@ -1740,7 +1741,7 @@ export default function AccountsPage() {
       if (failed.length > 0) {
         msg += `；失败 ${failed.length} 个（${failed.map((f) => `#${f.id}:${f.reason}`).join("；")}）`
       }
-      alert(msg)
+      toast.error(msg)
       // 若当前详情卡片正是被删的账号，关掉
       if (selectedId && bulkSelectedIds.has(selectedId)) {
         setSelectedId(null); setDetail(null); setShowCreds(false); setCreds(null)
@@ -1749,7 +1750,7 @@ export default function AccountsPage() {
       setBulkSelectedIds(new Set())
       await mutateAccounts()
     } catch (e) {
-      alert(`批量删除失败：${e instanceof Error ? e.message : String(e)}`)
+      toast.error(`批量删除失败：${e instanceof Error ? e.message : String(e)}`)
     } finally {
       setBulkDeleting(false)
     }
@@ -1834,7 +1835,7 @@ export default function AccountsPage() {
       setActionLoading("create")
       const ssid = Number(form.supply_source_id)
       if (!form.supplier_id || !ssid) {
-        alert("请选择供应商与云（货源）")
+        toast.error("请选择供应商与云（货源）")
         return
       }
 
@@ -1850,9 +1851,9 @@ export default function AccountsPage() {
           if (r.skipped.length > 0) {
             msg += `\n跳过示例：${r.skipped.slice(0, 3).map((s) => `${s.external_project_id}(${s.reason})`).join("；")}`
           }
-          alert(msg)
+          toast.error(msg)
         } catch (e) {
-          alert(`Taiji 自动建账号失败：${e instanceof Error ? e.message : e}`)
+          toast.error(`Taiji 自动建账号失败：${e instanceof Error ? e.message : e}`)
           return
         }
         setCreateOpen(false)
@@ -1866,15 +1867,15 @@ export default function AccountsPage() {
       if (formProvider === "azure" && createCredMode === "invite") {
         const inv = inviteState.invite
         if (!inv) {
-          alert("请先点「生成接入链接」并把链接发给客户")
+          toast.error("请先点「生成接入链接」并把链接发给客户")
           return
         }
         if (inv.status !== "consumed" || !inv.cloud_account_id) {
-          alert("邀请尚未完成。客户同意后再回到此处提交；也可直接关闭弹窗，在右上角「邀请记录」里查看进度。")
+          toast.success("邀请尚未完成。客户同意后再回到此处提交；也可直接关闭弹窗，在右上角「邀请记录」里查看进度。")
           return
         }
         if (!inviteState.selectedSubscriptionId) {
-          alert("请先点「验证订阅」并选择要绑定的订阅")
+          toast.error("请先点「验证订阅」并选择要绑定的订阅")
           return
         }
         await accountsApi.update(inv.cloud_account_id, {
@@ -1904,11 +1905,11 @@ export default function AccountsPage() {
             subscription_id: form.external_project_id.trim(),
           })
         } catch (e) {
-          alert(e instanceof Error ? e.message : "JSON 解析失败")
+          toast.error(e instanceof Error ? e.message : "JSON 解析失败")
           return
         }
         if (!merged.tenant_id || !merged.client_id || !merged.client_secret || !merged.subscription_id) {
-          alert("请在「云厂商账号配置」中填写或通过 JSON 提供：租户 ID、订阅 ID、应用 ID、应用密钥")
+          toast.error("请在「云厂商账号配置」中填写或通过 JSON 提供：租户 ID、订阅 ID、应用 ID、应用密钥")
           return
         }
         external_id = merged.subscription_id
@@ -1923,7 +1924,7 @@ export default function AccountsPage() {
           external_id = p.external_id
           secret_data = p.secret_data
         } catch (e) {
-          alert(e instanceof Error ? e.message : "AWS 配置无效")
+          toast.error(e instanceof Error ? e.message : "AWS 配置无效")
           return
         }
       } else if (formProvider === "gcp") {
@@ -1932,7 +1933,7 @@ export default function AccountsPage() {
           external_id = p.external_id
           secret_data = p.secret_data
         } catch (e) {
-          alert(e instanceof Error ? e.message : "GCP 配置无效")
+          toast.error(e instanceof Error ? e.message : "GCP 配置无效")
           return
         }
       }
@@ -1950,7 +1951,7 @@ export default function AccountsPage() {
       setCreateCredMode("fields")
       setForm(emptyForm())
       await load()
-    } catch (e) { alert(`创建失败: ${e instanceof Error ? e.message : e}`) }
+    } catch (e) { toast.error(`创建失败: ${e instanceof Error ? e.message : e}`) }
     finally { setActionLoading(null) }
   }
 
@@ -1964,7 +1965,7 @@ export default function AccountsPage() {
       else if (action === "activate") await accountsApi.activate(selectedId)
       else if (action === "standby") await accountsApi.standby(selectedId)
       await load(); await loadDetail(selectedId)
-    } catch (e) { alert(`操作失败: ${e instanceof Error ? e.message : e}`) }
+    } catch (e) { toast.error(`操作失败: ${e instanceof Error ? e.message : e}`) }
     finally { setActionLoading(null) }
   }
 
@@ -1981,7 +1982,7 @@ export default function AccountsPage() {
       await accountsApi.update(selectedId, { customer_codes: next })
       setCustomerDraft("")
       await load(); await loadDetail(selectedId)
-    } catch (e) { alert(`绑定客户编号失败: ${e instanceof Error ? e.message : e}`) }
+    } catch (e) { toast.error(`绑定客户编号失败: ${e instanceof Error ? e.message : e}`) }
     finally { setCustomerBusy(false) }
   }
   const handleRemoveCustomer = async (code: string) => {
@@ -1992,7 +1993,7 @@ export default function AccountsPage() {
       setCustomerBusy(true)
       await accountsApi.update(selectedId, { customer_codes: next })
       await load(); await loadDetail(selectedId)
-    } catch (e) { alert(`解绑失败: ${e instanceof Error ? e.message : e}`) }
+    } catch (e) { toast.error(`解绑失败: ${e instanceof Error ? e.message : e}`) }
     finally { setCustomerBusy(false) }
   }
 
@@ -2003,7 +2004,7 @@ export default function AccountsPage() {
       await accountsApi.hardDelete(id)
       if (selectedId === id) { setSelectedId(null); setDetail(null) }
       await load()
-    } catch (e) { alert(`删除失败: ${e instanceof Error ? e.message : e}`) }
+    } catch (e) { toast.error(`删除失败: ${e instanceof Error ? e.message : e}`) }
     finally { setActionLoading(null) }
   }
 
@@ -2013,7 +2014,7 @@ export default function AccountsPage() {
     if (showCreds) { setShowCreds(false); setCreds(null); return }
     if (!selectedId) return
     try { const c = await accountsApi.credentials(selectedId); setCreds(c); setShowCreds(true) }
-    catch (e) { alert(`获取凭证失败: ${e instanceof Error ? e.message : e}`) }
+    catch (e) { toast.error(`获取凭证失败: ${e instanceof Error ? e.message : e}`) }
   }
 
   const openEdit = async () => {
@@ -2109,7 +2110,7 @@ export default function AccountsPage() {
       setActionLoading("edit")
       const newSsid = Number(editForm.supply_source_id)
       if (!editForm.supplier_id || !newSsid) {
-        alert("请选择供应商与云（货源）")
+        toast.error("请选择供应商与云（货源）")
         return
       }
       const payload: Record<string, unknown> = {
@@ -2143,7 +2144,7 @@ export default function AccountsPage() {
             subscription_id: editForm.external_project_id.trim(),
           })
         } catch (e) {
-          alert(e instanceof Error ? e.message : "JSON 解析失败")
+          toast.error(e instanceof Error ? e.message : "JSON 解析失败")
           return
         }
         payload.external_project_id = merged.subscription_id
@@ -2165,7 +2166,7 @@ export default function AccountsPage() {
             payload.external_project_id = p.external_id
             payload.secret_data = p.secret_data
           } catch (e) {
-            alert(e instanceof Error ? e.message : "AWS 配置无效")
+            toast.error(e instanceof Error ? e.message : "AWS 配置无效")
             return
           }
         } else if (editProvider === "gcp") {
@@ -2174,7 +2175,7 @@ export default function AccountsPage() {
             payload.external_project_id = p.external_id
             payload.secret_data = p.secret_data
           } catch (e) {
-            alert(e instanceof Error ? e.message : "GCP 配置无效")
+            toast.error(e instanceof Error ? e.message : "GCP 配置无效")
             return
           }
         } else if (editProvider === "taiji") {
@@ -2183,7 +2184,7 @@ export default function AccountsPage() {
             payload.external_project_id = p.external_id
             payload.secret_data = p.secret_data
           } catch (e) {
-            alert(e instanceof Error ? e.message : "Taiji 配置无效")
+            toast.error(e instanceof Error ? e.message : "Taiji 配置无效")
             return
           }
         } else {
@@ -2193,7 +2194,7 @@ export default function AccountsPage() {
       await accountsApi.update(selectedId, payload as Parameters<typeof accountsApi.update>[1])
       setEditOpen(false)
       await load(); await loadDetail(selectedId)
-    } catch (e) { alert(`修改失败: ${e instanceof Error ? e.message : e}`) }
+    } catch (e) { toast.error(`修改失败: ${e instanceof Error ? e.message : e}`) }
     finally { setActionLoading(null) }
   }
 

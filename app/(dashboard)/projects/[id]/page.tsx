@@ -1,4 +1,5 @@
 "use client"
+import { toast } from "sonner"
 
 import { useState, useEffect, useCallback } from "react"
 import { useParams } from "next/navigation"
@@ -61,7 +62,7 @@ export default function ProjectDetailPage() {
       if (action === "activate") await projectsApi.activate(projectId)
       else if (action === "suspend") await projectsApi.suspend(projectId)
       await load()
-    } catch (e) { alert(`操作失败: ${e instanceof Error ? e.message : e}`) }
+    } catch (e) { toast.error(`操作失败: ${e instanceof Error ? e.message : e}`) }
     finally { setActionLoading(null) }
   }
 

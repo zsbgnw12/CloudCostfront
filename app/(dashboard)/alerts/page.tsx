@@ -1,4 +1,5 @@
 "use client"
+import { toast } from "sonner"
 
 import { useState, useEffect, useCallback, useMemo } from "react"
 import { Plus, MoreHorizontal, Bell, History, BarChart3, Loader2, CheckCircle2, AlertTriangle, Layers } from "lucide-react"
@@ -220,13 +221,13 @@ export default function AlertsPage() {
         // 用户未选具体账号 → 用上方"供应商/货源/主体"过滤出的账号集合
         // 1 个 = 等价单账号；多个 = 单类型告警不支持，提示换多项目类型
         if (formAccounts.length === 0) {
-          alert("没有匹配的服务账号，请调整供应商 / 货源 / 主体过滤")
+          toast.error("没有匹配的服务账号，请调整供应商 / 货源 / 主体过滤")
           return
         }
         if (formAccounts.length === 1) {
           target_id = formAccounts[0].external_project_id
         } else {
-          alert(
+          toast.error(
             `当前过滤命中 ${formAccounts.length} 个账号；` +
             `「${THRESHOLD_LABELS[form.threshold_type] ?? form.threshold_type}」` +
             "只支持单账号告警。\n\n请：\n" +
@@ -256,20 +257,20 @@ export default function AlertsPage() {
       resetForm()
       setEditingId(null)
       await load()
-    } catch (e) { alert(`${editingId === null ? "创建" : "保存"}失败: ${e instanceof Error ? e.message : e}`) }
+    } catch (e) { toast.error(`${editingId === null ? "创建" : "保存"}失败: ${e instanceof Error ? e.message : e}`) }
     finally { setActionLoading(null) }
   }
 
   const handleDelete = async (id: number) => {
     if (!confirm("确定删除此规则？")) return
     try { setActionLoading(`delete-${id}`); await alertsApi.deleteRule(id); await load() }
-    catch (e) { alert(`删除失败: ${e instanceof Error ? e.message : e}`) }
+    catch (e) { toast.error(`删除失败: ${e instanceof Error ? e.message : e}`) }
     finally { setActionLoading(null) }
   }
 
   const handleToggle = async (rule: AlertRule) => {
     try { setActionLoading(`toggle-${rule.id}`); await alertsApi.updateRule(rule.id, { is_active: !rule.is_active }); await load() }
-    catch (e) { alert(`操作失败: ${e instanceof Error ? e.message : e}`) }
+    catch (e) { toast.error(`操作失败: ${e instanceof Error ? e.message : e}`) }
     finally { setActionLoading(null) }
   }
 
