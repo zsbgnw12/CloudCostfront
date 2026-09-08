@@ -1,5 +1,6 @@
 "use client"
 import { toast } from "sonner"
+import { useConfirm } from "@/components/ui/use-confirm"
 
 import { useState, useEffect, useCallback, useMemo } from "react"
 import { Plus, MoreHorizontal, Bell, History, BarChart3, Loader2, CheckCircle2, AlertTriangle, Layers } from "lucide-react"
@@ -45,6 +46,7 @@ const SUPPLIER_FILTER_ALL = "__all_suppliers__"
 const fmt = (v: number) => `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
 export default function AlertsPage() {
+  const { confirm, ConfirmDialog } = useConfirm()
   const [rules, setRules] = useState<AlertRule[]>([])
   const [history, setHistory] = useState<AlertHistory[]>([])
   const { data: accounts = [] } = useAccounts()
@@ -262,7 +264,7 @@ export default function AlertsPage() {
   }
 
   const handleDelete = async (id: number) => {
-    if (!confirm("确定删除此规则？")) return
+    if (!(await confirm({ description: "确定删除此规则？", destructive: true }))) return
     try { setActionLoading(`delete-${id}`); await alertsApi.deleteRule(id); await load() }
     catch (e) { toast.error(`删除失败: ${e instanceof Error ? e.message : e}`) }
     finally { setActionLoading(null) }
@@ -282,6 +284,7 @@ export default function AlertsPage() {
 
   return (
     <div className="space-y-6 p-6">
+      {ConfirmDialog}
       <div className="flex items-center justify-between">
         <div><h1 className="text-2xl font-semibold text-foreground">告警管理</h1><p className="text-sm text-muted-foreground mt-1">配置服务账号费用告警规则，监控承诺用量达标情况</p></div>
         <Dialog

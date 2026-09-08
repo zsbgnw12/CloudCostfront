@@ -1,5 +1,6 @@
 "use client"
 import { toast } from "sonner"
+import { useConfirm } from "@/components/ui/use-confirm"
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import {
@@ -1006,6 +1007,7 @@ export type SelectedSupplySource = {
 
 /* ─── Main Page ──────────────────────────────────────────── */
 export default function AccountsPage() {
+  const { confirm, ConfirmDialog } = useConfirm()
   const { data: accounts = [], mutate: mutateAccounts, isLoading: loading } = useAccounts()
   const { data: sources = [], mutate: mutateSources } = useSupplySourcesAll()
   const { data: entities = [], mutate: mutateEntities } = useEntitiesAll()
@@ -1190,7 +1192,7 @@ export default function AccountsPage() {
       toast.error(`主体「${e.name}」下还有 ${e.accountCount} 个服务账号，先把账号迁出或解绑主体再删除`)
       return
     }
-    if (!confirm(`确定删除主体「${e.name}」？此操作不可撤销。`)) return
+    if (!(await confirm({ description: `确定删除主体「${e.name}」？此操作不可撤销。`, destructive: true }))) return
     try {
       await suppliersApi.deleteEntity(e.id)
       // 若刚刚选中的就是这个主体，回退到货源整体
@@ -1459,7 +1461,7 @@ export default function AccountsPage() {
         ``,
         `继续执行真改库？此操作不可撤销。`,
       ]
-      if (!confirm(lines.join("\n"))) return
+      if (!(await confirm({ title: "确认清理", description: lines.join("\n"), destructive: true }))) return
       const real = await accountsApi.taijiCleanupDuplicates({
         supply_source_id: selectedGroup.supplySourceId,
         dry_run: false,
@@ -1958,7 +1960,7 @@ export default function AccountsPage() {
   const handleAction = async (action: "suspend" | "activate" | "standby") => {
     if (!selectedId) return
     const labels = { suspend: "停用", activate: "启用", standby: "置为备用" }
-    if (!confirm(`确定${labels[action]}此账号？`)) return
+    if (!(await confirm({ description: `确定${labels[action]}此账号？` }))) return
     try {
       setActionLoading(action)
       if (action === "suspend") await accountsApi.suspend(selectedId)
@@ -1987,7 +1989,7 @@ export default function AccountsPage() {
   }
   const handleRemoveCustomer = async (code: string) => {
     if (!selectedId || !detail) return
-    if (!confirm(`解除客户编号 ${code} 与该账号的绑定？`)) return
+    if (!(await confirm({ description: `解除客户编号 ${code} 与该账号的绑定？` }))) return
     const next = (detail.customer_codes ?? []).filter((c) => c !== code)
     try {
       setCustomerBusy(true)
@@ -1998,7 +2000,7 @@ export default function AccountsPage() {
   }
 
   const handleDelete = async (id: number, name: string) => {
-    if (!confirm(`确定删除"${name}"？此操作不可恢复，将从数据库中彻底移除！`)) return
+    if (!(await confirm({ title: "彻底删除账号", description: `确定删除"${name}"？此操作不可恢复，将从数据库中彻底移除！`, destructive: true }))) return
     try {
       setActionLoading("delete")
       await accountsApi.hardDelete(id)
@@ -2200,6 +2202,7 @@ export default function AccountsPage() {
 
   return (
     <div className="flex h-[calc(100vh-4rem)] gap-0 overflow-hidden">
+      {ConfirmDialog}
       {/* ─── Left: Tree Panel ─── */}
       {/* h-full + min-h-0 保证整个 sidebar 严格不超出 flex 父容器；
           内部 ScrollArea/overflow div 才能正确局部滚动 */}
