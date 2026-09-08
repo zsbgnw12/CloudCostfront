@@ -1,5 +1,6 @@
 "use client"
 import { toast } from "sonner"
+import { useConfirm } from "@/components/ui/use-confirm"
 
 import { useState, useMemo } from "react"
 import {
@@ -28,6 +29,7 @@ const PROVIDER_ORDER = ["aws", "gcp", "azure", "taiji"]
 const RESERVED_UNASSIGNED_SUPPLIER_NAME = "未分配资源组"
 
 export default function SuppliersPage() {
+  const { confirm, ConfirmDialog } = useConfirm()
   const { data: suppliers = [], mutate: mutateSuppliers } = useSWR<SupplierRow[]>(
     "suppliers-list",
     () => suppliersApi.list(),
@@ -98,7 +100,7 @@ export default function SuppliersPage() {
   }
 
   const handleDeleteSource = async (ss: SupplySourceItem) => {
-    if (!confirm(`删除货源「${ss.supplier_name} · ${PROVIDER_LABELS[ss.provider] ?? ss.provider}」？仅当无服务账号时可删。`)) return
+    if (!(await confirm({ description: `删除货源「${ss.supplier_name} · ${PROVIDER_LABELS[ss.provider] ?? ss.provider}」？仅当无服务账号时可删。`, destructive: true }))) return
     try {
       await suppliersApi.deleteSupplySource(ss.id)
       await mutateSources()
@@ -122,7 +124,7 @@ export default function SuppliersPage() {
   }
 
   const handleDeleteSupplier = async (su: SupplierRow) => {
-    if (!confirm(`确定删除供应商「${su.name}」？须无服务账号且将同时删除其下空货源。`)) return
+    if (!(await confirm({ description: `确定删除供应商「${su.name}」？须无服务账号且将同时删除其下空货源。`, destructive: true }))) return
     try {
       await suppliersApi.remove(su.id)
       await mutateSuppliers()
@@ -134,6 +136,7 @@ export default function SuppliersPage() {
 
   return (
     <div className="p-6 space-y-6 max-w-5xl mx-auto">
+      {ConfirmDialog}
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
           <h1 className="text-2xl font-bold text-foreground">供应商管理</h1>
