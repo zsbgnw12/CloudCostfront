@@ -40,6 +40,11 @@ import {
 } from "@/lib/api"
 import { useUnreadCount, useNotifications } from "@/hooks/use-data"
 import { ThemeToggle } from "@/components/theme-toggle"
+import { toast } from "sonner"
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 
 interface SyncStatus {
   status: "idle" | "syncing" | "success" | "error"
@@ -59,6 +64,11 @@ function monthNotAfter(a: string, b: string) {
 
 export function Header() {
   const [searchQuery, setSearchQuery] = useState("")
+  // 同步失败明细（供"查看失败"弹窗）
+  const [failedSyncs, setFailedSyncs] = useState<{ id: number; name: string; error: string }[]>([])
+  const [failedOpen, setFailedOpen] = useState(false)
+  // 清空通知的确认弹窗
+  const [clearNotifOpen, setClearNotifOpen] = useState(false)
   const { data: notifData, mutate: mutateNotifs } = useNotifications(10)
   const { data: countData, mutate: mutateCount } = useUnreadCount()
   const notifications = notifData ?? []
@@ -107,16 +117,43 @@ export function Header() {
       if (wasUnread) {
         mutateCount((prev) => prev ? { count: Math.max(0, prev.count - 1) } : prev, false)
       }
-    } catch (e) { alert(`删除失败: ${e instanceof Error ? e.message : e}`) }
+    } catch (e) { toast.error(`删除失败: ${e instanceof Error ? e.message : e}`) }
   }
 
-  const handleClearAll = async () => {
-    if (!confirm("确定清空所有通知?(已读 + 未读全部删除)")) return
+  // 实际执行清空（确认弹窗点"确定"后调用）
+  const doClearAll = async () => {
+    setClearNotifOpen(false)
     try {
       await alertsApi.deleteAllNotifications(false)
       mutateNotifs(() => [], false)
       mutateCount({ count: 0 }, false)
-    } catch (e) { alert(`清空失败: ${e instanceof Error ? e.message : e}`) }
+      toast.success("已清空所有通知")
+    } catch (e) { toast.error(`清空失败: ${e instanceof Error ? e.message : e}`) }
+  }
+
+  // 同步跑完弹一条汇总 toast；有失败则记下明细，供"查看失败"弹窗
+  const showSyncSummary = async (fresh: SyncLogRow[]) => {
+    const success = fresh.filter((l) => l.status === "success").length
+    const failedLogs = fresh.filter((l) => l.status === "failed")
+    if (failedLogs.length === 0) {
+      toast.success(`同步完成：${success} 个数据源全部成功`)
+      setFailedSyncs([])
+      return
+    }
+    let nameMap: Record<number, string> = {}
+    try {
+      const dss = await dataSourcesApi.list()
+      nameMap = Object.fromEntries(dss.map((d) => [d.id, d.name]))
+    } catch { /* 拿不到名字就用 id */ }
+    setFailedSyncs(failedLogs.map((l) => ({
+      id: l.data_source_id,
+      name: nameMap[l.data_source_id] ?? `数据源 #${l.data_source_id}`,
+      error: l.error_message ?? "未知错误",
+    })))
+    toast.warning(`同步完成：成功 ${success}，失败 ${failedLogs.length}`, {
+      duration: 12000,
+      action: { label: "查看失败", onClick: () => setFailedOpen(true) },
+    })
   }
 
   // triggerAll 只是"派发"就返回，后台 Celery 才真正跑。这里派发后轮询 /api/sync/logs，
@@ -163,6 +200,7 @@ export function Header() {
           lastSync: new Date().toISOString(),
           progress,
         })
+        void showSyncSummary(fresh)
         setTimeout(() => setSyncStatus((prev) => ({ ...prev, status: "idle", progress: undefined })), 5000)
         return
       }
@@ -209,11 +247,13 @@ export function Header() {
       setDiscoverLoading(true)
       const result = await accountsApi.discoverGcpProjects()
       if (result.created > 0) {
-        alert(`发现并创建了 ${result.created} 个 GCP 项目：\n${result.projects.join("\n")}`)
+        toast.success(`发现并创建了 ${result.created} 个 GCP 项目`, {
+          description: result.projects.join("、"),
+        })
       } else {
-        alert("没有发现新的 GCP 项目")
+        toast.info("没有发现新的 GCP 项目")
       }
-    } catch (e) { alert(`发现失败: ${e instanceof Error ? e.message : e}`) }
+    } catch (e) { toast.error(`发现失败: ${e instanceof Error ? e.message : e}`) }
     finally { setDiscoverLoading(false) }
   }
 
@@ -264,7 +304,7 @@ export function Header() {
       resetGcpView()
       await runSyncOne(ds.id, m)
     } catch (e) {
-      alert(`保存失败: ${e instanceof Error ? e.message : e}`)
+      toast.error(`保存失败: ${e instanceof Error ? e.message : e}`)
       setGvSaving(false)
     }
   }
@@ -294,6 +334,7 @@ export function Header() {
       if (fresh.length > 0 && running === 0) {
         await loadLastSync()
         setSyncStatus({ status: failed > 0 ? "error" : "success", lastSync: new Date().toISOString(), progress })
+        void showSyncSummary(fresh)
         setTimeout(() => setSyncStatus((prev) => ({ ...prev, status: "idle", progress: undefined })), 5000)
         return
       }
@@ -547,6 +588,43 @@ export function Header() {
           </DialogContent>
         </Dialog>
 
+        {/* 同步失败明细 */}
+        <Dialog open={failedOpen} onOpenChange={setFailedOpen}>
+          <DialogContent className="sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle>同步失败的数据源（{failedSyncs.length}）</DialogTitle>
+              <DialogDescription>
+                多为账号密钥过期或授权缺失，需到对应云平台补凭证/授权。
+              </DialogDescription>
+            </DialogHeader>
+            <div className="max-h-[50vh] overflow-y-auto space-y-2 py-1">
+              {failedSyncs.map((f) => (
+                <div key={f.id} className="rounded-md border border-destructive/30 bg-destructive/5 p-2.5 text-xs">
+                  <div className="font-medium">{f.name}</div>
+                  <div className="mt-1 text-destructive break-all">{f.error}</div>
+                </div>
+              ))}
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setFailedOpen(false)}>关闭</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* 清空通知确认 */}
+        <AlertDialog open={clearNotifOpen} onOpenChange={setClearNotifOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>清空所有通知？</AlertDialogTitle>
+              <AlertDialogDescription>已读 + 未读将全部删除，此操作不可撤销。</AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>取消</AlertDialogCancel>
+              <AlertDialogAction onClick={doClearAll}>确定清空</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
         {/* Azure 邀请记录（cloud_admin / cloud_ops / cloud_azure 可见） */}
         <InvitationsMenu />
 
@@ -578,7 +656,7 @@ export function Header() {
                   <Button
                     variant="ghost" size="sm"
                     className="text-xs text-destructive hover:text-destructive h-auto p-0"
-                    onClick={handleClearAll}
+                    onClick={() => setClearNotifOpen(true)}
                   >
                     清空
                   </Button>
@@ -740,14 +818,14 @@ function InvitationsMenu() {
     try {
       await azureConsentApi.revokeInvite(id)
       mutate()
-    } catch (e) { alert(`作废失败: ${e instanceof Error ? e.message : e}`) }
+    } catch (e) { toast.error(`作废失败: ${e instanceof Error ? e.message : e}`) }
   }
 
   const handleDeleteInvite = async (id: number) => {
     try {
       await azureConsentApi.deleteInvite(id)
       mutate()
-    } catch (e) { alert(`删除失败: ${e instanceof Error ? e.message : e}`) }
+    } catch (e) { toast.error(`删除失败: ${e instanceof Error ? e.message : e}`) }
   }
 
   const handleClearInvites = async () => {
@@ -757,7 +835,7 @@ function InvitationsMenu() {
       await azureConsentApi.deleteInvitesBulk("expired")
       await azureConsentApi.deleteInvitesBulk("consumed")
       mutate()
-    } catch (e) { alert(`清空失败: ${e instanceof Error ? e.message : e}`) }
+    } catch (e) { toast.error(`清空失败: ${e instanceof Error ? e.message : e}`) }
   }
 
   const handleVerify = async (accountId: number) => {
