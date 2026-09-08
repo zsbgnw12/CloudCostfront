@@ -1,4 +1,5 @@
 "use client"
+import { toast } from "sonner"
 
 import { useState, useMemo } from "react"
 import {
@@ -66,7 +67,7 @@ export default function SuppliersPage() {
   const handleCreateSupplier = async () => {
     if (!newSupplierName.trim()) return
     if (newSupplierName.trim() === RESERVED_UNASSIGNED_SUPPLIER_NAME) {
-      alert(`「${RESERVED_UNASSIGNED_SUPPLIER_NAME}」为系统保留名称，请使用其他名称`)
+      toast.error(`「${RESERVED_UNASSIGNED_SUPPLIER_NAME}」为系统保留名称，请使用其他名称`)
       return
     }
     try {
@@ -76,7 +77,7 @@ export default function SuppliersPage() {
       setNewSupplierName("")
       await mutateSuppliers()
     } catch (e) {
-      alert(`创建失败: ${e instanceof Error ? e.message : e}`)
+      toast.error(`创建失败: ${e instanceof Error ? e.message : e}`)
     } finally {
       setActionLoading(null)
     }
@@ -90,7 +91,7 @@ export default function SuppliersPage() {
       setNewSourceProvider("gcp")
       await mutateSources()
     } catch (e) {
-      alert(`添加货源失败: ${e instanceof Error ? e.message : e}`)
+      toast.error(`添加货源失败: ${e instanceof Error ? e.message : e}`)
     } finally {
       setActionLoading(null)
     }
@@ -102,7 +103,7 @@ export default function SuppliersPage() {
       await suppliersApi.deleteSupplySource(ss.id)
       await mutateSources()
     } catch (e) {
-      alert(`删除失败: ${e instanceof Error ? e.message : e}`)
+      toast.error(`删除失败: ${e instanceof Error ? e.message : e}`)
     }
   }
 
@@ -114,7 +115,7 @@ export default function SuppliersPage() {
         await mutateSuppliers()
         await mutateSources()
       } catch (e) {
-        alert(`重命名失败: ${e instanceof Error ? e.message : e}`)
+        toast.error(`重命名失败: ${e instanceof Error ? e.message : e}`)
       }
     }
     setEditingId(null)
@@ -127,7 +128,7 @@ export default function SuppliersPage() {
       await mutateSuppliers()
       await mutateSources()
     } catch (e) {
-      alert(`删除失败: ${e instanceof Error ? e.message : e}`)
+      toast.error(`删除失败: ${e instanceof Error ? e.message : e}`)
     }
   }
 
