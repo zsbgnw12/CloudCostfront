@@ -1532,9 +1532,13 @@ export default function AccountsPage() {
   const [searchQuery, setSearchQuery] = useState("")
   const searchTrimmed = searchQuery.trim()
   const isSearching = searchTrimmed.length > 0
+  // "只看同步失败" 开关 + 全量失败数(用于顶部入口徽标)
+  const [onlyFailed, setOnlyFailed] = useState(false)
+  const failedTotal = useMemo(() => accounts.filter((a) => a.sync_status === "failed").length, [accounts])
   // View mode: "cards" shows account cards for selected group, "detail" shows single account.
   // 搜索时强制走 cards：搜索结果优先于"已选某账号详情"，避免误把搜索 hit 当成详情上下文。
-  const viewMode = selectedId && detail && !isSearching ? "detail" : "cards"
+  // onlyFailed 时也强制 cards（展示所有失败账号）。
+  const viewMode = selectedId && detail && !isSearching && !onlyFailed ? "detail" : "cards"
   /** 搜索时的"候选池"：有 selectedGroup → groupAccounts；否则 → 全部可见账号 */
   const searchScopeAccounts = useMemo(
     () => (selectedGroup ? groupAccounts : accounts),
@@ -1558,10 +1562,11 @@ export default function AccountsPage() {
    *  - 否则有 selectedGroup：groupAccounts
    *  - 否则：空（左侧提示语兜底） */
   const displayedAccounts = useMemo(() => {
+    if (onlyFailed) return accounts.filter((a) => a.sync_status === "failed")
     if (isSearching) return searchResults
     if (selectedGroup) return groupAccounts
     return [] as ServiceAccount[]
-  }, [isSearching, searchResults, selectedGroup, groupAccounts])
+  }, [onlyFailed, accounts, isSearching, searchResults, selectedGroup, groupAccounts])
 
   // ─── 服务账号分页(client-side):每页 N 张卡片 ────────────────
   const [accountsPage, setAccountsPage] = useState(1)
@@ -1572,10 +1577,10 @@ export default function AccountsPage() {
     return displayedAccounts.slice(start, start + accountsPageSize)
   }, [displayedAccounts, accountsPage, accountsPageSize])
 
-  // 查询/scope 改变时回到第 1 页
+  // 查询/scope/失败筛选 改变时回到第 1 页
   useEffect(() => {
     setAccountsPage(1)
-  }, [searchTrimmed, selectedGroup])
+  }, [searchTrimmed, selectedGroup, onlyFailed])
 
   const handleSelectGroup = (supplierName: string, supplySourceId: number, provider: string) => {
     setSelectedGroup({ supplierName, supplySourceId, provider })
@@ -2438,6 +2443,23 @@ export default function AccountsPage() {
             用户找货源时不直观；换成浏览器原生滚动条永远可见。
             flex-1 + min-h-0 是让 flex 子项收缩到 ScrollArea 的关键，
             否则 ScrollArea 内容会把 sidebar 撑到全高，外层页面跟着滚。 */}
+        {failedTotal > 0 && (
+          <button
+            type="button"
+            onClick={() => setOnlyFailed((v) => !v)}
+            title="只看同步失败的账号"
+            className={cn(
+              "mx-2 mt-2 mb-1 flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs w-[calc(100%-1rem)] transition-colors",
+              onlyFailed
+                ? "border-destructive/60 bg-destructive/20 text-destructive"
+                : "border-destructive/30 bg-destructive/5 text-destructive hover:bg-destructive/10",
+            )}
+          >
+            <span className="inline-block w-2 h-2 rounded-full bg-destructive shrink-0" />
+            <span className="font-medium truncate">{failedTotal} 个账号同步失败</span>
+            <span className="ml-auto opacity-80 shrink-0">{onlyFailed ? "显示全部" : "只看失败"}</span>
+          </button>
+        )}
         <div className="flex-1 min-h-0 overflow-y-auto p-2">
           {loading ? <p className="text-sm text-muted-foreground text-center py-8">加载中...</p>
           : tree.length === 0 ? <p className="text-sm text-muted-foreground text-center py-8">暂无账号</p>
@@ -2552,6 +2574,21 @@ export default function AccountsPage() {
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
+            {(() => {
+              const ds = accounts.find((a) => a.id === detail.id)
+              if (ds?.sync_status !== "failed") return null
+              return (
+                <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3">
+                  <div className="flex items-center gap-2 text-sm font-medium text-destructive">
+                    <span className="inline-block w-2 h-2 rounded-full bg-destructive shrink-0" />
+                    该账号上次同步失败
+                  </div>
+                  {ds.sync_error && (
+                    <div className="mt-1 text-xs text-destructive/90 break-all">{ds.sync_error}</div>
+                  )}
+                </div>
+              )
+            })()}
             <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
               <Card className="bg-card border-border"><CardContent className="p-4"><p className="text-xs text-muted-foreground">状态</p><div className="mt-2"><Badge variant="secondary" className={cn("text-sm", STATUS_MAP[detail.status]?.class ?? "")}>{STATUS_MAP[detail.status]?.label ?? detail.status}</Badge></div></CardContent></Card>
               <Card className="bg-card border-border"><CardContent className="p-4"><p className="text-xs text-muted-foreground">创建时间</p><p className="text-sm font-medium mt-1">{new Date(detail.created_at).toLocaleDateString("zh-CN")}</p></CardContent></Card>
@@ -3371,6 +3408,21 @@ export default function AccountsPage() {
 
 /* ─── Tree Components ──────────────────────────────────────── */
 
+/** 一组账号里同步失败的数量 */
+function failedCount(accts: ServiceAccount[]): number {
+  return accts.reduce((n, a) => n + (a.sync_status === "failed" ? 1 : 0), 0)
+}
+/** 红色小圆点:某节点下有同步失败的账号时显示,悬停看数量 */
+function FailDot({ n }: { n: number }) {
+  if (!n) return null
+  return (
+    <span
+      title={`${n} 个账号同步失败`}
+      className="inline-block w-2 h-2 rounded-full bg-destructive shrink-0"
+    />
+  )
+}
+
 interface TreeCallbacks {
   selectedGroup: SelectedSupplySource | null
   onSelectGroup: (supplierName: string, supplySourceId: number, provider: string) => void
@@ -3404,12 +3456,17 @@ function SupplierNode({ node, ...rest }: { node: SupplierTreeNode } & TreeCallba
     }
     return s + x.entities.reduce((t, e) => t + e.accounts.length, 0)
   }, 0)
+  const failed = node.sources.reduce((s, x) => {
+    const buckets = x.provider === "taiji" && x.users ? x.users : x.entities
+    return s + buckets.reduce((t, b) => t + failedCount(b.accounts), 0)
+  }, 0)
   return (
     <div className="mb-1">
       <button type="button" onClick={() => setOpen(!open)} className="flex items-center gap-2 w-full px-2 py-1.5 rounded hover:bg-accent text-sm font-semibold text-foreground">
         {open ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
         <Building2 className="w-4 h-4 text-muted-foreground" />
         <span className="truncate">{node.supplierName}</span>
+        <FailDot n={failed} />
         <Badge variant="secondary" className="ml-auto text-xs shrink-0">{total}</Badge>
       </button>
       {open && node.sources.map((src) => (
@@ -3450,6 +3507,7 @@ function SourceNode({
   const total = isTaiji
     ? (src.users ?? []).reduce((s, u) => s + u.accounts.length, 0)
     : src.entities.reduce((s, e) => s + e.accounts.length, 0)
+  const failed = (isTaiji ? (src.users ?? []) : src.entities).reduce((s, b) => s + failedCount(b.accounts), 0)
   // Taiji 没有主体 CRUD（按 username 派生分组，不可编辑），所以隐藏「+」按钮
   const canManage = !isTaiji && canManageEntityProvider(src.provider)
   return (
@@ -3474,6 +3532,7 @@ function SourceNode({
           <img src={`/${src.provider}.svg`} alt={src.provider} className="w-3.5 h-3.5" />
           <FolderOpen className="w-3.5 h-3.5" />
           <span>{pl}</span>
+          <FailDot n={failed} />
           <span className="ml-auto text-xs">{total}</span>
         </button>
         {canManage && (
@@ -3547,6 +3606,7 @@ function UserNode({
       >
         <span className="opacity-70 text-[10px] w-3 text-center">👤</span>
         <span className="truncate">{bucket.username}</span>
+        <FailDot n={failedCount(bucket.accounts)} />
         <span className="ml-auto text-[10px]">{bucket.accounts.length}</span>
       </button>
     </div>
@@ -3593,6 +3653,7 @@ function EntityNode({
       >
         <Building2 className="w-3 h-3 opacity-70" />
         <span className="truncate">{label}</span>
+        <FailDot n={failedCount(bucket.accounts)} />
         <span className="ml-auto text-[10px]">{bucket.accounts.length}</span>
       </button>
       {canManage && !isUnassigned && bucket.entityId !== null && (
