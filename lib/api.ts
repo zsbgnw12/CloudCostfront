@@ -198,6 +198,11 @@ export interface ServiceAccount {
   /** 销售系统分配的客户编号，可能多个；空数组即 "未分配"。 */
   customer_codes: string[]
   created_at: string
+  /** 该账号绑定的数据源同步状态（GCP 账号未绑则为 null）。 */
+  data_source_id?: number | null
+  sync_status?: string | null       // success / failed / running / pending
+  last_sync_at?: string | null
+  sync_error?: string | null        // sync_status=failed 时的最近错误原因
 }
 
 /** 货源（供应商 + 云），来自 /api/suppliers/supply-sources/all */

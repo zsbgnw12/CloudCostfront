@@ -3075,7 +3075,18 @@ export default function AccountsPage() {
                             </p>
                           </div>
                         </div>
-                        <Badge variant="secondary" className={cn("text-[10px] shrink-0 ml-2", STATUS_MAP[a.status]?.class ?? "")}>{STATUS_MAP[a.status]?.label ?? a.status}</Badge>
+                        <div className="flex items-center gap-1 shrink-0 ml-2">
+                          {a.sync_status === "failed" && (
+                            <Badge
+                              variant="secondary"
+                              title={a.sync_error ?? "上次同步失败"}
+                              className="text-[10px] bg-destructive/15 text-destructive border border-destructive/30 cursor-help"
+                            >
+                              同步失败
+                            </Badge>
+                          )}
+                          <Badge variant="secondary" className={cn("text-[10px]", STATUS_MAP[a.status]?.class ?? "")}>{STATUS_MAP[a.status]?.label ?? a.status}</Badge>
+                        </div>
                       </div>
                       <Separator className="my-3" />
                       <div className="flex items-center justify-between text-xs mt-1.5">
