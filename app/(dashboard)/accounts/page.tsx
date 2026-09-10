@@ -1535,6 +1535,12 @@ export default function AccountsPage() {
   // "只看同步失败" 开关 + 全量失败数(用于顶部入口徽标)
   const [onlyFailed, setOnlyFailed] = useState(false)
   const failedTotal = useMemo(() => accounts.filter((a) => a.sync_status === "failed").length, [accounts])
+  // 从仪表盘"N 个账号同步失败"点进来时(/accounts?failed=1),自动开启"只看失败"
+  useEffect(() => {
+    if (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("failed") === "1") {
+      setOnlyFailed(true)
+    }
+  }, [])
   // View mode: "cards" shows account cards for selected group, "detail" shows single account.
   // 搜索时强制走 cards：搜索结果优先于"已选某账号详情"，避免误把搜索 hit 当成详情上下文。
   // onlyFailed 时也强制 cards（展示所有失败账号）。
