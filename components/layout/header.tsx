@@ -45,6 +45,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import { useConfirm } from "@/components/ui/use-confirm"
 
 interface SyncStatus {
   status: "idle" | "syncing" | "success" | "error"
@@ -789,6 +790,7 @@ function timeAgoShort(dateStr: string | null | undefined) {
 }
 
 function InvitationsMenu() {
+  const { confirm, ConfirmDialog } = useConfirm()
   const { data: me } = useSWR("auth:me", () => authApi.me(), { revalidateOnFocus: false })
   const canSee = (me?.roles ?? []).some(
     (r) => r === "cloud_admin" || r === "cloud_ops" || r === "cloud_azure",
@@ -829,7 +831,7 @@ function InvitationsMenu() {
   }
 
   const handleClearInvites = async () => {
-    if (!confirm("清空所有非待同意邀请记录?(已作废 + 已验证 + 已使用)")) return
+    if (!(await confirm({ title: "清空邀请记录", description: "清空所有非待同意邀请记录?(已作废 + 已验证 + 已使用)", destructive: true }))) return
     try {
       // 先删 expired 再删 consumed,保留 pending
       await azureConsentApi.deleteInvitesBulk("expired")
@@ -855,6 +857,7 @@ function InvitationsMenu() {
 
   return (
     <>
+      {ConfirmDialog}
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button variant="ghost" size="icon" className="relative" title="Azure 接入邀请">
@@ -943,8 +946,8 @@ function InvitationsMenu() {
                     <Button
                       variant="ghost" size="sm"
                       className="h-7 text-xs text-destructive hover:text-destructive ml-auto"
-                      onClick={() => {
-                        if (confirm(`删除邀请记录「${inv.account_name}」?`)) handleDeleteInvite(inv.id)
+                      onClick={async () => {
+                        if (await confirm({ description: `删除邀请记录「${inv.account_name}」?`, destructive: true })) handleDeleteInvite(inv.id)
                       }}
                     >
                       删除

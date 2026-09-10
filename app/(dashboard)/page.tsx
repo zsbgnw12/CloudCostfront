@@ -52,8 +52,24 @@ export default function DashboardPage() {
     return m
   }, [accounts])
 
+  const failedAccounts = useMemo(
+    () => (accounts ?? []).filter((a) => a.sync_status === "failed").length,
+    [accounts],
+  )
+
   return (
     <div className="space-y-6 p-6">
+      {failedAccounts > 0 && (
+        <a
+          href="/accounts?failed=1"
+          className="flex items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-2.5 text-sm text-destructive hover:bg-destructive/15 transition-colors"
+        >
+          <span className="inline-block w-2 h-2 rounded-full bg-destructive shrink-0" />
+          <span className="font-medium">{failedAccounts} 个账号同步失败</span>
+          <span className="opacity-80 hidden sm:inline">— 多为密钥过期 / 授权缺失，点击查看并处理</span>
+          <span className="ml-auto text-xs opacity-70 shrink-0">前往账号页 →</span>
+        </a>
+      )}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div><h1 className="text-3xl font-bold tracking-tight text-foreground">仪表盘</h1><p className="text-sm text-foreground/50 mt-1">全景云费用总览洞察</p></div>
         <Select value={month} onValueChange={setMonth}>
