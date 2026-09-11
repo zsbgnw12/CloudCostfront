@@ -117,7 +117,7 @@ export default function DashboardPage() {
           <div className="flex items-start justify-between">
             <div className="space-y-2">
               <p className="text-sm font-medium text-foreground/60">服务账号</p>
-              <div className="text-3xl font-bold tracking-tight text-foreground">{accounts ? accounts.length : <Skeleton className="h-9 w-16" />}</div>
+              <div className="text-3xl font-bold tracking-tight text-foreground">{acctSummary ? acctSummary.total : <Skeleton className="h-9 w-16" />}</div>
               <div className="flex gap-2 text-xs pt-2">
                 <Badge variant="outline" className="bg-emerald-500/10 text-emerald-400 border-0 text-xs">使用中 {statusCounts.active}</Badge>
                 <Badge variant="outline" className="bg-red-500/10 text-red-400 border-0 text-xs">已停用 {statusCounts.inactive}</Badge>

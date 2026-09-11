@@ -36,7 +36,7 @@ import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 import {
   alertsApi, accountsApi, syncApi, authApi, azureConsentApi, dataSourcesApi,
-  type AzureConsentInvite, type AzureVerifyResult, type GcpViewVerifyResult,
+  type AzureConsentInvite, type AzureVerifyResult, type GcpViewVerifyResult, type SyncLogRow,
 } from "@/lib/api"
 import { useUnreadCount, useNotifications } from "@/hooks/use-data"
 import { ThemeToggle } from "@/components/theme-toggle"
