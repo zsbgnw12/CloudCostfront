@@ -25,6 +25,13 @@ export function useSuppliers() {
   })
 }
 
+// ─── Accounts summary (轻量聚合，仪表盘用，不拉全量) ──────────
+export function useAccountsSummary() {
+  return useSWR("accounts:summary", () => accountsApi.summary(), {
+    dedupingInterval: 30000,
+  })
+}
+
 // ─── Accounts (shared across many pages) ────────────────────
 export function useAccounts(params?: { provider?: string; status?: string }) {
   const key = params?.provider || params?.status
