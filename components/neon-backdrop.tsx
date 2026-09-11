@@ -30,7 +30,8 @@ export function NeonBackdrop() {
     window.addEventListener("resize", resize)
 
     interface P { x: number; y: number; vx: number; vy: number; r: number; hue: number }
-    const N = Math.min(90, Math.floor((window.innerWidth * window.innerHeight) / 18000))
+    // 连线是 O(N²)，减粒子最省 CPU：上限 90→48、密度 /18000→/32000
+    const N = Math.min(48, Math.floor((window.innerWidth * window.innerHeight) / 32000))
     const PARTS: P[] = []
     for (let i = 0; i < N; i++) {
       PARTS.push({
@@ -43,7 +44,12 @@ export function NeonBackdrop() {
       })
     }
 
-    const tick = () => {
+    // 限帧到 ~30fps(缓慢漂移的粒子肉眼几乎无差,CPU 减半);标签页不可见时彻底暂停。
+    const FRAME_MS = 1000 / 30
+    let last = 0
+    let running = true
+
+    const draw = () => {
       ctx.clearRect(0, 0, window.innerWidth, window.innerHeight)
       // 粒子自由漂移 — 后台卡片把背景挡得差不多了,鼠标吸引意义不大,
       // 直接拿掉省 CPU + 省事件监听。
@@ -84,13 +90,24 @@ export function NeonBackdrop() {
         ctx.arc(p.x, p.y, p.r * 6, 0, Math.PI * 2)
         ctx.fill()
       }
+    }
+
+    const tick = (t: number) => {
+      if (running && t - last >= FRAME_MS) {
+        last = t
+        draw()
+      }
       raf = requestAnimationFrame(tick)
     }
     raf = requestAnimationFrame(tick)
 
+    const onVis = () => { running = document.visibilityState === "visible" }
+    document.addEventListener("visibilitychange", onVis)
+
     return () => {
       cancelAnimationFrame(raf)
       window.removeEventListener("resize", resize)
+      document.removeEventListener("visibilitychange", onVis)
     }
   }, [resolvedTheme])
 
