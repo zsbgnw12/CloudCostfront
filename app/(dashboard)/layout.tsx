@@ -42,13 +42,25 @@ export default function DashboardLayout({
         if (res.status === 401) {
           // 显式硬跳，绕过 router.replace 可能保留的 React 状态/SWR cache
           if (typeof window !== "undefined" && window.location.pathname !== "/login") {
-            window.location.replace("/login")
+            // 循环检测:短时间内多次"登录后仍 401"被踢回 → 多半是浏览器拦了第三方
+            // Cookie(无痕模式常见)。此时跳到带说明的登录页,不再静默无限循环。
+            let dest = "/login"
+            try {
+              const now = Date.now()
+              const hist = (JSON.parse(sessionStorage.getItem("_auth_bounce") || "[]") as number[])
+                .filter((t) => now - t < 30000)
+              hist.push(now)
+              sessionStorage.setItem("_auth_bounce", JSON.stringify(hist))
+              if (hist.length >= 3) dest = "/login?err=cookies"
+            } catch { /* sessionStorage 不可用就正常跳 */ }
+            window.location.replace(dest)
           }
           setAuthed(false)
           return
         }
         if (res.ok) {
           setAuthed(true)
+          try { sessionStorage.removeItem("_auth_bounce") } catch { /* ignore */ }
         }
       } catch {
         // 网络错误等：下一次心跳再试，不强跳避免误杀

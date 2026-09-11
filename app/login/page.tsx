@@ -25,6 +25,7 @@ export default function LoginPage() {
   const [hovering, setHovering] = useState(false)
   const [loading, setLoading] = useState(false)
   const [force, setForce] = useState(false)
+  const [cookieBlocked, setCookieBlocked] = useState(false)
   const [introDone, setIntroDone] = useState(false)
   const [titleDone, setTitleDone] = useState(false)
   const burstRef = useRef<BurstParticle[]>([])
@@ -32,6 +33,7 @@ export default function LoginPage() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     setForce(params.get("force") === "true")
+    setCookieBlocked(params.get("err") === "cookies")
   }, [])
 
   useEffect(() => {
@@ -391,6 +393,17 @@ export default function LoginPage() {
         {force && (
           <div className="mt-8 max-w-md login-fade-up login-delay-400 px-5 py-3 rounded-xl bg-amber-500/10 border border-amber-500/40 text-amber-200 text-sm text-center backdrop-blur-sm">
             ⚠ 当前账号未分配 CloudCost 访问权限。请使用其他账号登录,或联系管理员分配 cloud_admin / cloud_ops / cloud_aws / cloud_gcp / cloud_azure / cloud_taiji 角色。
+          </div>
+        )}
+
+        {cookieBlocked && (
+          <div className="mt-8 max-w-md login-fade-up login-delay-400 px-5 py-3 rounded-xl bg-red-500/10 border border-red-500/40 text-red-200 text-sm text-left backdrop-blur-sm">
+            <p className="font-semibold mb-1">⚠ 登录无法保持(浏览器拦截了 Cookie)</p>
+            <p className="text-red-200/90 leading-relaxed">
+              检测到反复跳转登录。常见于<strong>无痕 / 隐私模式</strong>——它默认屏蔽第三方 Cookie,
+              导致登录状态存不住。请改用<strong>普通窗口</strong>,或在浏览器设置里对本站
+              <strong>允许第三方 Cookie</strong>后重试。
+            </p>
           </div>
         )}
 
