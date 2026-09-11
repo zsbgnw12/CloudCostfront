@@ -1543,8 +1543,7 @@ export default function AccountsPage() {
   }, [])
   // View mode: "cards" shows account cards for selected group, "detail" shows single account.
   // 搜索时强制走 cards：搜索结果优先于"已选某账号详情"，避免误把搜索 hit 当成详情上下文。
-  // onlyFailed 时也强制 cards（展示所有失败账号）。
-  const viewMode = selectedId && detail && !isSearching && !onlyFailed ? "detail" : "cards"
+  const viewMode = selectedId && detail && !isSearching ? "detail" : "cards"
   /** 搜索时的"候选池"：有 selectedGroup → groupAccounts；否则 → 全部可见账号 */
   const searchScopeAccounts = useMemo(
     () => (selectedGroup ? groupAccounts : accounts),
@@ -2452,7 +2451,12 @@ export default function AccountsPage() {
         {failedTotal > 0 && (
           <button
             type="button"
-            onClick={() => setOnlyFailed((v) => !v)}
+            onClick={() => {
+              const nv = !onlyFailed
+              setOnlyFailed(nv)
+              // 开启筛选时清掉已选详情，回到卡片列表(避免停在旧详情上)
+              if (nv) { setSelectedId(null); setDetail(null) }
+            }}
             title="只看同步失败的账号"
             className={cn(
               "mx-2 mt-2 mb-1 flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs w-[calc(100%-1rem)] transition-colors",
@@ -2934,10 +2938,10 @@ export default function AccountsPage() {
                       <Search className="w-5 h-5 text-muted-foreground" />
                       <div>
                         <h2 className="text-lg font-semibold text-foreground leading-tight">
-                          {isSearching ? "全局搜索" : "请选择左侧节点"}
+                          {isSearching ? "全局搜索" : onlyFailed ? "同步失败的账号" : "请选择左侧节点"}
                         </h2>
                         <p className="text-sm text-muted-foreground mt-0.5">
-                          {isSearching ? "跨货源 / 主体匹配" : "或在上方搜索框中输入"}
+                          {isSearching ? "跨货源 / 主体匹配" : onlyFailed ? `共 ${displayedAccounts.length} 个` : "或在上方搜索框中输入"}
                         </p>
                       </div>
                     </div>
