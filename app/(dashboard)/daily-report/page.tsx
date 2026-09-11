@@ -690,7 +690,17 @@ export default function DailyReportPage() {
                 </div>
               ) : (
                 <div className="overflow-auto max-h-[calc(100vh-360px)]">
-                  <table className="w-full text-sm border-collapse">
+                  {/* table-layout:fixed + colgroup 固定列宽 —— 配合行上的 content-visibility:auto，
+                      列宽不再依赖屏幕外行的内容，滚动时列不会跳动。 */}
+                  <table className="text-sm border-collapse" style={{ tableLayout: "fixed", width: 220 + 110 + pivot.dates.length * 96 + 56 }}>
+                    <colgroup>
+                      <col style={{ width: 220 }} />
+                      <col style={{ width: 110 }} />
+                      {pivot.dates.map((d) => (
+                        <col key={d} style={{ width: 96 }} />
+                      ))}
+                      <col style={{ width: 56 }} />
+                    </colgroup>
                     <thead className="sticky top-0 z-10">
                       <tr className="bg-muted">
                         <th className="text-left px-3 py-2 font-medium text-muted-foreground whitespace-nowrap border-b border-border sticky left-0 bg-muted z-20 min-w-[200px]">
@@ -878,8 +888,8 @@ function GroupRows({
   return (
     <>
       {/* Group header */}
-      <tr className="bg-accent">
-        <td className="px-3 py-1.5 font-semibold text-foreground whitespace-nowrap border-b border-border sticky left-0 bg-accent z-10">
+      <tr className="bg-accent" style={{ contentVisibility: "auto", containIntrinsicSize: "auto 33px" }}>
+        <td className="px-3 py-1.5 font-semibold text-foreground truncate border-b border-border sticky left-0 bg-accent z-10" title={group.label}>
           📁 {group.label}
         </td>
         <td className="text-right px-3 py-1.5 font-semibold text-foreground border-b border-border font-mono text-xs">
@@ -898,11 +908,11 @@ function GroupRows({
 
       {/* Account rows */}
       {group.accounts.map((acct) => (
-        <tr key={acct.id} className="hover:bg-accent/20 transition-colors">
-          <td className="px-3 py-1.5 pl-8 whitespace-nowrap border-b border-border sticky left-0 bg-card z-10">
-            <div className="flex flex-col">
-              <span className="text-foreground text-sm">{acct.name}</span>
-              <span className="text-muted-foreground text-[11px]">{acct.extId}</span>
+        <tr key={acct.id} className="hover:bg-accent/20 transition-colors" style={{ contentVisibility: "auto", containIntrinsicSize: "auto 41px" }}>
+          <td className="px-3 py-1.5 pl-8 whitespace-nowrap overflow-hidden border-b border-border sticky left-0 bg-card z-10">
+            <div className="flex flex-col min-w-0">
+              <span className="text-foreground text-sm truncate" title={acct.name}>{acct.name}</span>
+              <span className="text-muted-foreground text-[11px] truncate" title={acct.extId}>{acct.extId}</span>
             </div>
           </td>
           <td className="text-right px-3 py-1.5 border-b border-border font-mono text-xs text-foreground font-medium">
