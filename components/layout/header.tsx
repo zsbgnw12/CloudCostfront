@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react"
 import {
   Search, Bell, RefreshCw, Check, AlertTriangle, Info, Loader2, ChevronDown, LogOut,
-  MailPlus, CheckCircle2, Ban, Clock, Plus,
+  MailPlus, CheckCircle2, Ban, Clock, Plus, History,
 } from "lucide-react"
 import useSWR from "swr"
 import { Button } from "@/components/ui/button"
@@ -68,6 +68,12 @@ export function Header() {
   // 同步失败明细（供"查看失败"弹窗）
   const [failedSyncs, setFailedSyncs] = useState<{ id: number; name: string; error: string }[]>([])
   const [failedOpen, setFailedOpen] = useState(false)
+  // 同步记录弹窗（只读列出最近同步任务，来源 /api/sync/logs，不新增菜单/路由）
+  const [recordsOpen, setRecordsOpen] = useState(false)
+  const [records, setRecords] = useState<SyncLogRow[]>([])
+  const [recordsLoading, setRecordsLoading] = useState(false)
+  const [recordsFilter, setRecordsFilter] = useState<"all" | "running" | "success" | "failed">("all")
+  const [recordsNames, setRecordsNames] = useState<Record<number, string>>({})
   // 清空通知的确认弹窗
   const [clearNotifOpen, setClearNotifOpen] = useState(false)
   const { data: notifData, mutate: mutateNotifs } = useNotifications(10)
@@ -156,6 +162,26 @@ export function Header() {
       action: { label: "查看失败", onClick: () => setFailedOpen(true) },
     })
   }
+
+  // 加载同步记录（最近 100 条日志 + 数据源名映射）。只读，不触发任何同步。
+  const loadRecords = useCallback(async () => {
+    setRecordsLoading(true)
+    try {
+      const [logs, dss] = await Promise.all([
+        syncApi.logs({ limit: 100 }),
+        dataSourcesApi.list().catch(() => [] as Awaited<ReturnType<typeof dataSourcesApi.list>>),
+      ])
+      setRecords(logs)
+      setRecordsNames(Object.fromEntries(dss.map((d) => [d.id, d.name])))
+    } catch (e) {
+      console.error("加载同步记录失败:", e)
+      toast.error("加载同步记录失败")
+    } finally {
+      setRecordsLoading(false)
+    }
+  }, [])
+
+  const openRecords = () => { setRecordsOpen(true); void loadRecords() }
 
   // triggerAll 只是"派发"就返回，后台 Celery 才真正跑。这里派发后轮询 /api/sync/logs，
   // 只统计"派发之后新产生"的日志(id > baseline)，真实反映"进行中/成功/失败"，跑完才停。
@@ -445,6 +471,10 @@ export function Header() {
               <RefreshCw className="w-4 h-4 mr-2" />
               自定义月份范围…
             </DropdownMenuItem>
+            <DropdownMenuItem onClick={openRecords}>
+              <History className="w-4 h-4 mr-2" />
+              查看同步记录…
+            </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={handleDiscoverGcp} disabled={discoverLoading}>
               {discoverLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Search className="w-4 h-4 mr-2" />}
@@ -608,6 +638,94 @@ export function Header() {
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setFailedOpen(false)}>关闭</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* 同步记录（只读列出最近同步任务；入口在同步下拉菜单，不新增侧栏/路由） */}
+        <Dialog open={recordsOpen} onOpenChange={setRecordsOpen}>
+          <DialogContent className="sm:max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>同步记录</DialogTitle>
+              <DialogDescription>
+                最近 100 条同步任务。手动或定时同步都在这里；「运行中」超过约 1 小时的任务会被后台清道夫自动收尾为失败。
+              </DialogDescription>
+            </DialogHeader>
+
+            {/* 过滤 + 刷新 */}
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1">
+                {([
+                  ["all", "全部"],
+                  ["running", "运行中"],
+                  ["success", "成功"],
+                  ["failed", "失败"],
+                ] as const).map(([key, label]) => {
+                  const n = key === "all" ? records.length : records.filter((r) => r.status === key).length
+                  return (
+                    <Button
+                      key={key}
+                      type="button"
+                      variant={recordsFilter === key ? "default" : "outline"}
+                      size="sm"
+                      className="h-7 px-2 text-xs"
+                      onClick={() => setRecordsFilter(key)}
+                    >
+                      {label} {n}
+                    </Button>
+                  )
+                })}
+              </div>
+              <Button type="button" variant="ghost" size="sm" className="h-7 gap-1.5 text-xs" onClick={loadRecords} disabled={recordsLoading}>
+                <RefreshCw className={cn("w-3.5 h-3.5", recordsLoading && "animate-spin")} />
+                刷新
+              </Button>
+            </div>
+
+            <div className="max-h-[55vh] overflow-y-auto space-y-1.5 py-1">
+              {recordsLoading && records.length === 0 ? (
+                <div className="flex items-center justify-center py-10 text-muted-foreground text-sm">
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" /> 加载中…
+                </div>
+              ) : (() => {
+                const rows = records.filter((r) => recordsFilter === "all" || r.status === recordsFilter)
+                if (rows.length === 0) {
+                  return <div className="py-10 text-center text-muted-foreground text-sm">暂无记录</div>
+                }
+                return rows.map((r) => {
+                  const st = r.status === "success"
+                    ? { icon: <CheckCircle2 className="w-3.5 h-3.5 text-status-active" />, cls: "border-border" }
+                    : r.status === "failed"
+                    ? { icon: <Ban className="w-3.5 h-3.5 text-destructive" />, cls: "border-destructive/30 bg-destructive/5" }
+                    : { icon: <Loader2 className="w-3.5 h-3.5 text-amber-500 animate-spin" />, cls: "border-amber-500/30 bg-amber-500/5" }
+                  const started = r.start_time ? new Date(r.start_time).toLocaleString("zh-CN", { hour12: false }) : "—"
+                  return (
+                    <div key={r.id} className={cn("rounded-md border p-2.5 text-xs", st.cls)}>
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          {st.icon}
+                          <span className="font-medium truncate">{recordsNames[r.data_source_id] ?? `数据源 #${r.data_source_id}`}</span>
+                        </div>
+                        <span className="shrink-0 text-muted-foreground tabular-nums">{started}</span>
+                      </div>
+                      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-muted-foreground">
+                        {(r.query_start_date || r.query_end_date) && (
+                          <span>区间 {r.query_start_date}~{r.query_end_date}</span>
+                        )}
+                        {r.status === "success" && <span>入库 {r.records_upserted}</span>}
+                        {r.status === "running" && <span className="text-amber-600 dark:text-amber-500">运行中…</span>}
+                      </div>
+                      {r.status === "failed" && r.error_message && (
+                        <div className="mt-1 text-destructive break-all">{r.error_message}</div>
+                      )}
+                    </div>
+                  )
+                })
+              })()}
+            </div>
+
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setRecordsOpen(false)}>关闭</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
