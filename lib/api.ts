@@ -411,6 +411,9 @@ export const accountsApi = {
   /** 全量列表:自动循环翻页拿全。给"想看完整列表"的简单调用方用。
    *  返回 ServiceAccount[](保持向后兼容)。如要分页 UI,请用 listPaged。 */
   list: (params?: { provider?: string; status?: string; customer_code?: string }) =>
+    // pageSize=500:把原来 200/页 ~7 次串行往返压到 ~3 次。用 500(=旧后端上限)而非
+    // 更大值,是为了不依赖后端 page_size 放开的部署顺序——即使后端未先部署也不会 422。
+    // 后端上限已放开到 5000,后续可再调大到一次拉完。
     fetchAllPaged<ServiceAccount>((page, pageSize) => {
       const qs = new URLSearchParams()
       if (params?.provider) qs.set("provider", params.provider)
@@ -419,7 +422,12 @@ export const accountsApi = {
       qs.set("page", String(page))
       qs.set("page_size", String(pageSize))
       return `/api/service-accounts/?${qs.toString()}`
-    }),
+    }, 500),
+
+  /** 轻量聚合:状态分布 + 同步失败数。给仪表盘等只要数字的地方用,不拉全量列表。 */
+  summary: () => request<{ total: number; status_counts: Record<string, number>; failed: number }>(
+    "/api/service-accounts/summary",
+  ),
 
   /** 单页列表,返回 { items, total, page, page_size }。给分页 UI 用。 */
   listPaged: (params?: {

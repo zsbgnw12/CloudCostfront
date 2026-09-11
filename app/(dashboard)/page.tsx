@@ -11,7 +11,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, PieChart, Pie, Cell,
 } from "recharts"
-import { useAccounts, useDashboardBundle } from "@/hooks/use-data"
+import { useAccountsSummary, useDashboardBundle } from "@/hooks/use-data"
 import type { DashboardTrendPoint, DashboardProviderSlice } from "@/lib/api"
 import { useChartTheme } from "@/lib/chart-theme"
 
@@ -39,7 +39,7 @@ export default function DashboardPage() {
   const trend = dash?.trend
   const byProvider = dash?.by_provider
   const byService = dash?.by_service
-  const { data: accounts } = useAccounts()
+  const { data: acctSummary } = useAccountsSummary()
 
   const trendData = useMemo(() => (trend ?? []).map((r: DashboardTrendPoint) => ({
     date: String(r.date ?? "").slice(5),
@@ -47,15 +47,11 @@ export default function DashboardPage() {
   })), [trend])
 
   const statusCounts = useMemo(() => {
-    const m: Record<string, number> = { active: 0, inactive: 0 }
-    ;(accounts ?? []).forEach((a) => { m[a.status] = (m[a.status] ?? 0) + 1 })
+    const m: Record<string, number> = { active: 0, inactive: 0, ...(acctSummary?.status_counts ?? {}) }
     return m
-  }, [accounts])
+  }, [acctSummary])
 
-  const failedAccounts = useMemo(
-    () => (accounts ?? []).filter((a) => a.sync_status === "failed").length,
-    [accounts],
-  )
+  const failedAccounts = acctSummary?.failed ?? 0
 
   return (
     <div className="space-y-6 p-6">
