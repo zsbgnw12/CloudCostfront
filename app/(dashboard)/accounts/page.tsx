@@ -1115,7 +1115,6 @@ export default function AccountsPage() {
 
   // Taiji 清理重复数据的 running 状态；真正的 handler 在 load 声明之后定义
   // （deps 引用 load —— 不能放在 load 上面，否则 TDZ）。
-  const [taijiCleanupRunning, setTaijiCleanupRunning] = useState(false)
   // Taiji 按月份同步（一次性操作触发 backend collector 按日拉 blob）
   const [taijiSyncRunning, setTaijiSyncRunning] = useState(false)
   const [taijiSyncStatus, setTaijiSyncStatus] = useState<string>("")
@@ -1440,54 +1439,6 @@ export default function AccountsPage() {
   }, [selectedGroup, load])
 
   // Taiji 清理重复数据 handler。必须在 load 声明之后定义（deps 引用 load）
-  const handleTaijiCleanup = useCallback(async () => {
-    if (!selectedGroup || selectedGroup.provider !== "taiji") return
-    setTaijiCleanupRunning(true)
-    try {
-      const dry = await accountsApi.taijiCleanupDuplicates({
-        supply_source_id: selectedGroup.supplySourceId,
-        dry_run: true,
-      })
-      const lines = [
-        `Taiji 重复数据清理 — 干跑结果：`,
-        ``,
-        `- 当前 Taiji DataSource 数: ${dry.total_data_sources_before}`,
-        `- 将保留的 DS id: ${dry.kept_data_source_id}`,
-        `- 将删除孤儿 DataSource: ${dry.orphan_data_sources_removed}`,
-        `- 将删除孤儿 CloudAccount: ~${dry.orphan_cloud_accounts_removed}`,
-        `- 将删除的重复 billing 行: ${dry.billing_rows_deleted_as_dup}`,
-        `- 重定向到保留 DS 的 billing 行: ${dry.billing_rows_reassigned_to_kept}`,
-        `- 需要 repoint 的 Project: ${dry.projects_repointed}`,
-        ``,
-        `继续执行真改库？此操作不可撤销。`,
-      ]
-      if (!(await confirm({ title: "确认清理", description: lines.join("\n"), destructive: true }))) return
-      const real = await accountsApi.taijiCleanupDuplicates({
-        supply_source_id: selectedGroup.supplySourceId,
-        dry_run: false,
-      })
-      // dashboard 读的是 billing_daily_summary 预聚合表；清理只动了 billing_summary
-      // 原始表，预聚合还停留在旧的 N× 放大的数字。完成清理后立刻刷一次。
-      let refreshNote = ""
-      try {
-        const rs = await syncApi.refreshSummary()
-        refreshNote = `\n预聚合表已刷新：${rs.refreshed_range ?? rs.reason ?? "ok"}`
-      } catch (e) {
-        refreshNote = `\n⚠ 预聚合刷新失败，请到 /accounts 之外重试或联系运维：${e instanceof Error ? e.message : e}`
-      }
-      toast.error(
-        `清理完成：删 ${real.billing_rows_deleted_as_dup} 行重复 billing，` +
-        `${real.orphan_data_sources_removed} 个孤儿 DS / ${real.orphan_cloud_accounts_removed} 个孤儿 CA，` +
-        `${real.projects_repointed} 个 Project 重定向到 DS#${real.kept_data_source_id}` +
-        refreshNote,
-      )
-      await load()
-    } catch (e) {
-      toast.error(`清理失败：${e instanceof Error ? e.message : String(e)}`)
-    } finally {
-      setTaijiCleanupRunning(false)
-    }
-  }, [selectedGroup, load])
 
   // 按 visible_providers 过滤树数据：cloud_<provider> 用户只看本云的货源/主体；
   // admin/ops (visibleProviders === null) 看全量。后端已对 /supply-sources/all 等
@@ -2982,7 +2933,7 @@ export default function AccountsPage() {
                           variant="outline"
                           className="h-7 text-xs gap-1"
                           onClick={() => taijiFileInputRef.current?.click()}
-                          disabled={taijiUploadRunning || taijiSyncRunning || taijiCleanupRunning}
+                          disabled={taijiUploadRunning || taijiSyncRunning}
                           title="直接选本地 30 个日快照 JSON 文件，浏览器读完逐个 POST 入库；完全绕过 Azure Blob"
                         >
                           {taijiUploadRunning ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
@@ -2996,7 +2947,7 @@ export default function AccountsPage() {
                           variant="outline"
                           className="h-7 text-xs gap-1"
                           onClick={handleTaijiSyncMonth}
-                          disabled={taijiSyncRunning || taijiCleanupRunning || taijiUploadRunning}
+                          disabled={taijiSyncRunning || taijiUploadRunning}
                           title="按 YYYY-MM 月份触发后台 collector 同步该月份的所有日快照（默认 2026-04，可改）"
                         >
                           {taijiSyncRunning ? <Loader2 className="w-3 h-3 animate-spin" /> : <Clock className="w-3 h-3" />}
@@ -3004,17 +2955,6 @@ export default function AccountsPage() {
                           {taijiSyncRunning && taijiSyncStatus && (
                             <span className="ml-1 text-[10px] text-muted-foreground">· {taijiSyncStatus}</span>
                           )}
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="h-7 text-xs gap-1"
-                          onClick={handleTaijiCleanup}
-                          disabled={taijiCleanupRunning || taijiSyncRunning || taijiUploadRunning}
-                          title="把每账号独立 CA/DS 合并为 supply_source 级共享 CA/DS，去重 billing 行（修复历史数据被 N× 放大）"
-                        >
-                          {taijiCleanupRunning ? <Loader2 className="w-3 h-3 animate-spin" /> : <AlertTriangle className="w-3 h-3" />}
-                          清理重复数据
                         </Button>
                       </>
                     )}

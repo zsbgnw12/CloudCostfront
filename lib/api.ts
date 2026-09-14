@@ -57,7 +57,6 @@ async function tryRefresh(): Promise<boolean> {
 const _DEFAULT_FETCH_TIMEOUT_MS = 30_000
 const _LONG_FETCH_PATTERNS = [
   /\/api\/service-accounts\/taiji-from-blob$/,
-  /\/api\/service-accounts\/taiji-cleanup-duplicates$/,
   /\/api\/service-accounts\/taiji-ingest-day$/,
   /\/api\/service-accounts\/azure-sync-subscription-names$/,
   /\/api\/service-accounts\/bulk-/,
@@ -556,27 +555,6 @@ export const accountsApi = {
       body: JSON.stringify(data),
     }),
 
-  /**
-   * Taiji 货源专用：把"每账号一个独立 CA/DS"的历史脏数据合并为
-   * supply_source 级共享 CA/DS，并去重 billing_summary 中被 N 次复制的费用行。
-   * - dry_run=true 只统计、不动数据
-   * - dry_run=false 落地
-   * 权限要求：cloud_admin。仅在历史导入数据被 N× 放大时调用一次。
-   */
-  taijiCleanupDuplicates: (data: { supply_source_id: number; dry_run: boolean }) =>
-    request<{
-      dry_run: boolean
-      total_data_sources_before: number
-      kept_data_source_id: number | null
-      orphan_data_sources_removed: number
-      orphan_cloud_accounts_removed: number
-      billing_rows_deleted_as_dup: number
-      billing_rows_reassigned_to_kept: number
-      projects_repointed: number
-    }>("/api/service-accounts/taiji-cleanup-duplicates", {
-      method: "POST",
-      body: JSON.stringify(data),
-    }),
   suspend: (id: number) =>
     request<ServiceAccountDetail>(`/api/service-accounts/${id}/suspend`, { method: "POST" }),
   activate: (id: number) =>
