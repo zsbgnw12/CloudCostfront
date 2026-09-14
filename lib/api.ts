@@ -705,6 +705,7 @@ export interface SyncLogRow {
   id: number
   data_source_id: number
   celery_task_id: string | null
+  batch_id: string | null
   start_time: string
   end_time: string | null
   status: string | null  // running | success | failed
@@ -713,6 +714,21 @@ export interface SyncLogRow {
   records_fetched: number
   records_upserted: number
   error_message: string | null
+}
+
+// 一次派发(同步全部/定时/手动单源)= 一个任务,由后端按 batch_id 聚合
+export interface SyncBatch {
+  batch_id: string
+  started_at: string | null
+  last_activity: string | null
+  total: number
+  success: number
+  failed: number
+  running: number
+  overall_status: "running" | "success" | "failed"
+  date_start: string | null
+  date_end: string | null
+  providers: string[]
 }
 
 export const syncApi = {
@@ -728,14 +744,17 @@ export const syncApi = {
       body: JSON.stringify({ start_month, end_month }),
     }),
   status: (taskId: string) => request<{ task_id: string; status: string; result: unknown }>(`/api/sync/status/${taskId}`),
-  logs: (params?: { data_source_id?: number; status?: string; limit?: number }) => {
+  logs: (params?: { data_source_id?: number; status?: string; batch_id?: string; limit?: number }) => {
     const qs = new URLSearchParams()
     if (params?.data_source_id != null) qs.set("data_source_id", String(params.data_source_id))
     if (params?.status) qs.set("status", params.status)
+    if (params?.batch_id) qs.set("batch_id", params.batch_id)
     if (params?.limit != null) qs.set("limit", String(params.limit))
     const s = qs.toString()
     return request<SyncLogRow[]>(`/api/sync/logs${s ? `?${s}` : ""}`)
   },
+  // 同步任务列表:按批次聚合(每个 = 一次派发)。点进去用 logs({batch_id}) 看各账号。
+  batches: (limit = 30) => request<SyncBatch[]>(`/api/sync/batches?limit=${limit}`),
   /**
    * 重建 billing_daily_summary 预聚合表（dashboard 读这张）。
    * 不传日期 = 按 billing_summary 全量范围重算。

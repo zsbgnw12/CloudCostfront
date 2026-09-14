@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react"
 import {
   Search, Bell, RefreshCw, Check, AlertTriangle, Info, Loader2, ChevronDown, LogOut,
-  MailPlus, CheckCircle2, Ban, Clock, Plus, History,
+  MailPlus, CheckCircle2, Ban, Clock, Plus, History, ChevronLeft, ChevronRight,
 } from "lucide-react"
 import useSWR from "swr"
 import { Button } from "@/components/ui/button"
@@ -36,7 +36,7 @@ import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 import {
   alertsApi, accountsApi, syncApi, authApi, azureConsentApi, dataSourcesApi,
-  type AzureConsentInvite, type AzureVerifyResult, type GcpViewVerifyResult, type SyncLogRow,
+  type AzureConsentInvite, type AzureVerifyResult, type GcpViewVerifyResult, type SyncLogRow, type SyncBatch,
 } from "@/lib/api"
 import { useUnreadCount, useNotifications } from "@/hooks/use-data"
 import { ThemeToggle } from "@/components/theme-toggle"
@@ -54,6 +54,8 @@ interface SyncStatus {
   progress?: { running: number; success: number; failed: number; total: number }
 }
 
+const PROVIDER_LABEL: Record<string, string> = { aws: "AWS", gcp: "GCP", azure: "Azure", taiji: "Taiji" }
+
 function monthStr(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`
 }
@@ -68,11 +70,14 @@ export function Header() {
   // 同步失败明细（供"查看失败"弹窗）
   const [failedSyncs, setFailedSyncs] = useState<{ id: number; name: string; error: string }[]>([])
   const [failedOpen, setFailedOpen] = useState(false)
-  // 同步记录弹窗（只读列出最近同步任务，来源 /api/sync/logs，不新增菜单/路由）
+  // 同步任务弹窗（两层：任务列表 → 点进看这批各服务账号成败；入口在同步下拉，不新增侧栏/路由）
   const [recordsOpen, setRecordsOpen] = useState(false)
-  const [records, setRecords] = useState<SyncLogRow[]>([])
-  const [recordsLoading, setRecordsLoading] = useState(false)
-  const [recordsFilter, setRecordsFilter] = useState<"all" | "running" | "success" | "failed">("all")
+  const [batches, setBatches] = useState<SyncBatch[]>([])
+  const [batchesLoading, setBatchesLoading] = useState(false)
+  const [activeBatch, setActiveBatch] = useState<SyncBatch | null>(null)  // null=任务列表；非空=某任务明细
+  const [batchLogs, setBatchLogs] = useState<SyncLogRow[]>([])
+  const [batchLogsLoading, setBatchLogsLoading] = useState(false)
+  const [detailFilter, setDetailFilter] = useState<"all" | "running" | "success" | "failed">("all")
   const [recordsNames, setRecordsNames] = useState<Record<number, string>>({})
   // 清空通知的确认弹窗
   const [clearNotifOpen, setClearNotifOpen] = useState(false)
@@ -163,25 +168,41 @@ export function Header() {
     })
   }
 
-  // 加载同步记录（最近 100 条日志 + 数据源名映射）。只读，不触发任何同步。
-  const loadRecords = useCallback(async () => {
-    setRecordsLoading(true)
+  // 加载任务列表（按批次聚合）。只读，不触发任何同步。
+  const loadBatches = useCallback(async () => {
+    setBatchesLoading(true)
     try {
-      const [logs, dss] = await Promise.all([
-        syncApi.logs({ limit: 100 }),
-        dataSourcesApi.list().catch(() => [] as Awaited<ReturnType<typeof dataSourcesApi.list>>),
-      ])
-      setRecords(logs)
-      setRecordsNames(Object.fromEntries(dss.map((d) => [d.id, d.name])))
+      setBatches(await syncApi.batches(30))
     } catch (e) {
-      console.error("加载同步记录失败:", e)
-      toast.error("加载同步记录失败")
+      console.error("加载同步任务失败:", e)
+      toast.error("加载同步任务失败")
     } finally {
-      setRecordsLoading(false)
+      setBatchesLoading(false)
     }
   }, [])
 
-  const openRecords = () => { setRecordsOpen(true); void loadRecords() }
+  // 点进某个任务：拉这批全部日志（各服务账号）+ 数据源名映射
+  const openBatch = useCallback(async (b: SyncBatch) => {
+    setActiveBatch(b)
+    setDetailFilter("all")
+    setBatchLogsLoading(true)
+    setBatchLogs([])
+    try {
+      const [logs, dss] = await Promise.all([
+        syncApi.logs({ batch_id: b.batch_id, limit: 2000 }),
+        dataSourcesApi.list().catch(() => [] as Awaited<ReturnType<typeof dataSourcesApi.list>>),
+      ])
+      setBatchLogs(logs)
+      setRecordsNames(Object.fromEntries(dss.map((d) => [d.id, d.name])))
+    } catch (e) {
+      console.error("加载任务明细失败:", e)
+      toast.error("加载任务明细失败")
+    } finally {
+      setBatchLogsLoading(false)
+    }
+  }, [])
+
+  const openRecords = () => { setRecordsOpen(true); setActiveBatch(null); void loadBatches() }
 
   // triggerAll 只是"派发"就返回，后台 Celery 才真正跑。这里派发后轮询 /api/sync/logs，
   // 只统计"派发之后新产生"的日志(id > baseline)，真实反映"进行中/成功/失败"，跑完才停。
@@ -642,87 +663,122 @@ export function Header() {
           </DialogContent>
         </Dialog>
 
-        {/* 同步记录（只读列出最近同步任务；入口在同步下拉菜单，不新增侧栏/路由） */}
+        {/* 同步任务（两层：任务列表 → 点进看这批各服务账号成败；入口在同步下拉，不新增侧栏/路由） */}
         <Dialog open={recordsOpen} onOpenChange={setRecordsOpen}>
           <DialogContent className="sm:max-w-2xl">
             <DialogHeader>
-              <DialogTitle>同步记录</DialogTitle>
+              <DialogTitle>{activeBatch ? "任务明细" : "同步任务"}</DialogTitle>
               <DialogDescription>
-                最近 100 条同步任务。手动或定时同步都在这里；「运行中」超过约 1 小时的任务会被后台清道夫自动收尾为失败。
+                {activeBatch
+                  ? "本次同步涉及的各服务账号成败明细；失败多为账号密钥过期或授权缺失。"
+                  : "每次「同步」= 一个任务(手动或定时),点任务查看这批各服务账号谁成功、谁失败。仅显示本功能上线后的同步。"}
               </DialogDescription>
             </DialogHeader>
 
-            {/* 过滤 + 刷新 */}
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-1">
-                {([
-                  ["all", "全部"],
-                  ["running", "运行中"],
-                  ["success", "成功"],
-                  ["failed", "失败"],
-                ] as const).map(([key, label]) => {
-                  const n = key === "all" ? records.length : records.filter((r) => r.status === key).length
-                  return (
-                    <Button
-                      key={key}
-                      type="button"
-                      variant={recordsFilter === key ? "default" : "outline"}
-                      size="sm"
-                      className="h-7 px-2 text-xs"
-                      onClick={() => setRecordsFilter(key)}
-                    >
-                      {label} {n}
-                    </Button>
-                  )
-                })}
-              </div>
-              <Button type="button" variant="ghost" size="sm" className="h-7 gap-1.5 text-xs" onClick={loadRecords} disabled={recordsLoading}>
-                <RefreshCw className={cn("w-3.5 h-3.5", recordsLoading && "animate-spin")} />
-                刷新
-              </Button>
-            </div>
-
-            <div className="max-h-[55vh] overflow-y-auto space-y-1.5 py-1">
-              {recordsLoading && records.length === 0 ? (
-                <div className="flex items-center justify-center py-10 text-muted-foreground text-sm">
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" /> 加载中…
+            {activeBatch ? (
+              /* ===================== 任务明细层 ===================== */
+              <>
+                <div className="flex items-center justify-between gap-2">
+                  <Button type="button" variant="ghost" size="sm" className="h-7 gap-1 px-2 text-xs" onClick={() => setActiveBatch(null)}>
+                    <ChevronLeft className="w-3.5 h-3.5" /> 返回任务列表
+                  </Button>
+                  <div className="flex items-center gap-1">
+                    {([["all", "全部"], ["running", "运行中"], ["success", "成功"], ["failed", "失败"]] as const).map(([key, label]) => {
+                      const n = key === "all" ? batchLogs.length : batchLogs.filter((r) => r.status === key).length
+                      return (
+                        <Button key={key} type="button" variant={detailFilter === key ? "default" : "outline"} size="sm" className="h-7 px-2 text-xs" onClick={() => setDetailFilter(key)}>
+                          {label} {n}
+                        </Button>
+                      )
+                    })}
+                  </div>
                 </div>
-              ) : (() => {
-                const rows = records.filter((r) => recordsFilter === "all" || r.status === recordsFilter)
-                if (rows.length === 0) {
-                  return <div className="py-10 text-center text-muted-foreground text-sm">暂无记录</div>
-                }
-                return rows.map((r) => {
-                  const st = r.status === "success"
-                    ? { icon: <CheckCircle2 className="w-3.5 h-3.5 text-status-active" />, cls: "border-border" }
-                    : r.status === "failed"
-                    ? { icon: <Ban className="w-3.5 h-3.5 text-destructive" />, cls: "border-destructive/30 bg-destructive/5" }
-                    : { icon: <Loader2 className="w-3.5 h-3.5 text-amber-500 animate-spin" />, cls: "border-amber-500/30 bg-amber-500/5" }
-                  const started = r.start_time ? new Date(r.start_time).toLocaleString("zh-CN", { hour12: false }) : "—"
-                  return (
-                    <div key={r.id} className={cn("rounded-md border p-2.5 text-xs", st.cls)}>
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          {st.icon}
-                          <span className="font-medium truncate">{recordsNames[r.data_source_id] ?? `数据源 #${r.data_source_id}`}</span>
-                        </div>
-                        <span className="shrink-0 text-muted-foreground tabular-nums">{started}</span>
-                      </div>
-                      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-muted-foreground">
-                        {(r.query_start_date || r.query_end_date) && (
-                          <span>区间 {r.query_start_date}~{r.query_end_date}</span>
-                        )}
-                        {r.status === "success" && <span>入库 {r.records_upserted}</span>}
-                        {r.status === "running" && <span className="text-amber-600 dark:text-amber-500">运行中…</span>}
-                      </div>
-                      {r.status === "failed" && r.error_message && (
-                        <div className="mt-1 text-destructive break-all">{r.error_message}</div>
-                      )}
+
+                {/* 批次摘要 */}
+                <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground flex flex-wrap gap-x-4 gap-y-1">
+                  <span className="tabular-nums">{activeBatch.started_at ? new Date(activeBatch.started_at).toLocaleString("zh-CN", { hour12: false }) : "—"}</span>
+                  {activeBatch.providers.length > 0 && <span>{activeBatch.providers.map((p) => PROVIDER_LABEL[p] ?? p).join(" · ")}</span>}
+                  {(activeBatch.date_start || activeBatch.date_end) && <span>区间 {activeBatch.date_start}~{activeBatch.date_end}</span>}
+                  <span>共 {activeBatch.total} · <span className="text-status-active">成 {activeBatch.success}</span> · <span className="text-destructive">败 {activeBatch.failed}</span>{activeBatch.running > 0 && <> · <span className="text-amber-500">跑 {activeBatch.running}</span></>}</span>
+                </div>
+
+                <div className="max-h-[48vh] overflow-y-auto space-y-1.5 py-1">
+                  {batchLogsLoading ? (
+                    <div className="flex items-center justify-center py-10 text-muted-foreground text-sm">
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" /> 加载中…
                     </div>
-                  )
-                })
-              })()}
-            </div>
+                  ) : (() => {
+                    const rows = batchLogs.filter((r) => detailFilter === "all" || r.status === detailFilter)
+                    if (rows.length === 0) return <div className="py-10 text-center text-muted-foreground text-sm">该筛选下无记录</div>
+                    return rows.map((r) => {
+                      const st = r.status === "success"
+                        ? { icon: <CheckCircle2 className="w-3.5 h-3.5 text-status-active shrink-0" />, cls: "border-border" }
+                        : r.status === "failed"
+                        ? { icon: <Ban className="w-3.5 h-3.5 text-destructive shrink-0" />, cls: "border-destructive/30 bg-destructive/5" }
+                        : { icon: <Loader2 className="w-3.5 h-3.5 text-amber-500 animate-spin shrink-0" />, cls: "border-amber-500/30 bg-amber-500/5" }
+                      return (
+                        <div key={r.id} className={cn("rounded-md border p-2.5 text-xs", st.cls)}>
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            {st.icon}
+                            <span className="font-medium truncate">{recordsNames[r.data_source_id] ?? `数据源 #${r.data_source_id}`}</span>
+                            {r.status === "success" && <span className="ml-auto shrink-0 text-muted-foreground">入库 {r.records_upserted}</span>}
+                            {r.status === "running" && <span className="ml-auto shrink-0 text-amber-600 dark:text-amber-500">运行中…</span>}
+                          </div>
+                          {r.status === "failed" && r.error_message && (
+                            <div className="mt-1 text-destructive break-all">{r.error_message}</div>
+                          )}
+                        </div>
+                      )
+                    })
+                  })()}
+                </div>
+              </>
+            ) : (
+              /* ===================== 任务列表层 ===================== */
+              <>
+                <div className="flex items-center justify-end">
+                  <Button type="button" variant="ghost" size="sm" className="h-7 gap-1.5 text-xs" onClick={loadBatches} disabled={batchesLoading}>
+                    <RefreshCw className={cn("w-3.5 h-3.5", batchesLoading && "animate-spin")} /> 刷新
+                  </Button>
+                </div>
+                <div className="max-h-[55vh] overflow-y-auto space-y-1.5 py-1">
+                  {batchesLoading && batches.length === 0 ? (
+                    <div className="flex items-center justify-center py-10 text-muted-foreground text-sm">
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" /> 加载中…
+                    </div>
+                  ) : batches.length === 0 ? (
+                    <div className="py-10 text-center text-muted-foreground text-sm">暂无同步任务</div>
+                  ) : (
+                    batches.map((b) => {
+                      const st = b.overall_status === "success"
+                        ? { icon: <CheckCircle2 className="w-4 h-4 text-status-active shrink-0" />, cls: "border-border" }
+                        : b.overall_status === "failed"
+                        ? { icon: <AlertTriangle className="w-4 h-4 text-destructive shrink-0" />, cls: "border-destructive/30 bg-destructive/5" }
+                        : { icon: <Loader2 className="w-4 h-4 text-amber-500 animate-spin shrink-0" />, cls: "border-amber-500/30 bg-amber-500/5" }
+                      return (
+                        <button key={b.batch_id} type="button" onClick={() => openBatch(b)} className={cn("w-full text-left rounded-md border p-2.5 text-xs transition-colors hover:bg-accent/40", st.cls)}>
+                          <div className="flex items-center gap-2">
+                            {st.icon}
+                            <span className="font-medium tabular-nums">{b.started_at ? new Date(b.started_at).toLocaleString("zh-CN", { hour12: false }) : "—"}</span>
+                            {b.providers.length > 0 && (
+                              <span className="text-muted-foreground truncate">{b.providers.map((p) => PROVIDER_LABEL[p] ?? p).join(" · ")}</span>
+                            )}
+                            <ChevronRight className="w-4 h-4 ml-auto shrink-0 text-muted-foreground" />
+                          </div>
+                          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 pl-6 text-muted-foreground">
+                            <span>共 {b.total}</span>
+                            <span className="text-status-active">成 {b.success}</span>
+                            <span className={b.failed > 0 ? "text-destructive font-medium" : ""}>败 {b.failed}</span>
+                            {b.running > 0 && <span className="text-amber-600 dark:text-amber-500">运行中 {b.running}</span>}
+                            {(b.date_start || b.date_end) && <span className="ml-auto">区间 {b.date_start}~{b.date_end}</span>}
+                          </div>
+                        </button>
+                      )
+                    })
+                  )}
+                </div>
+              </>
+            )}
 
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setRecordsOpen(false)}>关闭</Button>
