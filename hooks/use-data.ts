@@ -5,6 +5,7 @@ import {
   dashboardApi,
   alertsApi,
   meteringApi,
+  dataSourcesApi,
   type ServiceAccount,
   type SupplySourceItem,
   type EntityItem,
@@ -16,6 +17,7 @@ import {
   type MeteringProductOption,
   type MeteringFilters,
   type SupplierRow,
+  type DataSourceRow,
 } from "@/lib/api"
 
 // ─── Suppliers（列表页与筛选共用）────────────────────────────
@@ -47,6 +49,20 @@ export function useSupplySourcesAll() {
   return useSWR<SupplySourceItem[]>("supply-sources-all", () => suppliersApi.listAllSupplySources(), {
     dedupingInterval: 60000,
   })
+}
+
+/**
+ * 数据源列表，可按云类型筛选。
+ *
+ * taiji 货源下一个数据源就是一个站点（一个网关部署 = 一个 CloudAccount = 一个
+ * DataSource），所以这个 hook 同时是站点筛选的数据来源。
+ */
+export function useDataSources(provider?: string) {
+  return useSWR<DataSourceRow[]>(
+    provider ? `data-sources:${provider}` : "data-sources",
+    () => dataSourcesApi.list(provider),
+    { dedupingInterval: 60000 },
+  )
 }
 
 /** 全部主体（含 supplier/provider/account_count），用于树与下拉 */
