@@ -16,7 +16,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table"
 import { accountsApi, billingApi, type DailyReportRow, type CostSummary } from "@/lib/api"
-import { useAccounts, useSuppliers, useSupplySourcesAll } from "@/hooks/use-data"
+import { useAccounts, useSuppliers, useSupplySourcesAll, useDataSources } from "@/hooks/use-data"
 import { cn } from "@/lib/utils"
 import { format, startOfMonth, endOfMonth, subMonths, startOfQuarter, endOfQuarter, subQuarters, subDays } from "date-fns"
 import { useChartTheme } from "@/lib/chart-theme"
@@ -75,6 +75,8 @@ export default function DailyReportPage() {
   /** 服务账号多选：空数组 = 不限（按上游货源/供应商范围） */
   const [accountIds, setAccountIds] = useState<number[]>([])
   /** Taiji 货源专属：用户(username) 筛选；"__all__" = 全部用户 */
+  /** Taiji 货源专属：站点筛选;"__all__" = 全部站点。站点即 data_source_id。 */
+  const [dataSourceId, setDataSourceId] = useState<string>("__all__")
   const [taijiUsername, setTaijiUsername] = useState<string>("__all__")
   const [loading, setLoading] = useState(false)
   /** 草稿字符串：允许空串、中间态，避免受控 number 一删就回 0 */
@@ -103,7 +105,12 @@ export default function DailyReportPage() {
   const loadData = useCallback(async () => {
     try {
       setLoading(true)
-      const data = await accountsApi.dailyReport(dateRange.start, dateRange.end, providerForApi)
+      const data = await accountsApi.dailyReport(
+        dateRange.start,
+        dateRange.end,
+        providerForApi,
+        dataSourceId !== "__all__" ? Number(dataSourceId) : undefined,
+      )
       setRows(data)
     } catch (e) {
       console.error(e)
@@ -111,7 +118,7 @@ export default function DailyReportPage() {
     } finally {
       setLoading(false)
     }
-  }, [dateRange, providerForApi])
+  }, [dateRange, providerForApi, dataSourceId])
 
   useEffect(() => {
     loadData()
@@ -124,8 +131,16 @@ export default function DailyReportPage() {
 
   useEffect(() => {
     setAccountIds([])
+    setDataSourceId("__all__")
     setTaijiUsername("__all__")
   }, [supplySourceId])
+
+  useEffect(() => {
+    // 切站点清空下游：同名的 用户:令牌 在两个站点上是两个不同的令牌，
+    // 残留选择会把 A 站点的账号带到 B 站点的视图里。
+    setAccountIds([])
+    setTaijiUsername("__all__")
+  }, [dataSourceId])
 
   useEffect(() => {
     // 切用户清空下游账号选择，避免残留
@@ -133,6 +148,8 @@ export default function DailyReportPage() {
   }, [taijiUsername])
 
   /** 当前选中货源是否 Taiji */
+  const { data: taijiDataSources = [] } = useDataSources("taiji")
+
   const selectedSourceIsTaiji = useMemo(() => {
     if (supplySourceId === "__all__") return false
     return sources.find((s) => String(s.id) === supplySourceId)?.provider === "taiji"
@@ -362,6 +379,7 @@ export default function DailyReportPage() {
       dateRange.end,
       providerForApi,
       discountPct > 0 ? discountPct : undefined,
+      dataSourceId !== "__all__" ? Number(dataSourceId) : undefined,
     )
     window.open(url, "_blank")
   }
@@ -461,6 +479,24 @@ export default function DailyReportPage() {
               </Select>
             </div>
             {/* Taiji 货源专属：用户筛选（在货源和服务账号中间） */}
+            {selectedSourceIsTaiji && (
+              <div className="space-y-1">
+                <Label className="text-xs">站点</Label>
+                <Select
+                  value={dataSourceId}
+                  onValueChange={(v) => setDataSourceId(v)}
+                  disabled={taijiDataSources.length === 0}
+                >
+                  <SelectTrigger className="h-8 w-44 text-sm"><SelectValue placeholder="全部站点" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__all__">全部站点 ({taijiDataSources.length})</SelectItem>
+                    {taijiDataSources.map((ds) => (
+                      <SelectItem key={ds.id} value={String(ds.id)}>{ds.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             {selectedSourceIsTaiji && (
               <div className="space-y-1">
                 <Label className="text-xs">用户</Label>

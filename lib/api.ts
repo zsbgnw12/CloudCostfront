@@ -285,6 +285,9 @@ export interface DailyReportRow {
   account_name: string
   provider: string
   external_project_id: string
+  /** taiji 货源下，数据源即站点。 */
+  data_source_id?: number | null
+  taiji_username?: string | null
   date: string
   product: string | null
   cost: number
@@ -576,15 +579,18 @@ export const accountsApi = {
   },
   credentials: (id: number) =>
     request<Record<string, unknown>>(`/api/service-accounts/${id}/credentials`),
-  dailyReport: (start_date: string, end_date: string, provider?: string) => {
+  dailyReport: (start_date: string, end_date: string, provider?: string, data_source_id?: number) => {
     const qs = new URLSearchParams({ start_date, end_date })
     if (provider) qs.set("provider", provider)
+    if (data_source_id != null) qs.set("data_source_id", String(data_source_id))
     return request<DailyReportRow[]>(`/api/service-accounts/daily-report?${qs}`)
   },
-  dailyReportExportUrl: (start_date: string, end_date: string, provider?: string, discount_pct?: number) => {
+  dailyReportExportUrl: (start_date: string, end_date: string, provider?: string, discount_pct?: number, data_source_id?: number) => {
     const qs = new URLSearchParams({ start_date, end_date })
     if (provider) qs.set("provider", provider)
     if (discount_pct != null && discount_pct > 0) qs.set("discount_pct", String(discount_pct))
+    // 导出必须跟随同一个站点筛选，否则筛选后导出会悄悄含进全部站点。
+    if (data_source_id != null) qs.set("data_source_id", String(data_source_id))
     return `${API_BASE}/api/service-accounts/daily-report/export?${qs}`
   },
   discoverGcpProjects: () =>
