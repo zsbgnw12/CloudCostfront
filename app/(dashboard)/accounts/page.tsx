@@ -30,6 +30,7 @@ import {
 import { useAccounts, useSupplySourcesAll, useEntitiesAll } from "@/hooks/use-data"
 import useSWR from "swr"
 import { cn } from "@/lib/utils"
+import { taijiUsernameLabel } from "@/lib/taiji"
 
 /* ─── Status helpers ─────────────────────────────────────── */
 const STATUS_MAP: Record<string, { label: string; class: string }> = {
@@ -872,23 +873,8 @@ interface SupplierTreeNode {
 }
 
 const UNASSIGNED_ENTITY_LABEL = "未分配主体"
-const UNKNOWN_TAIJI_USER_LABEL = "未知用户"
 
-/** 从 external_project_id 提取 Taiji 用户名（"username:token_name" → "username"）。 */
-function _extractTaijiUsername(externalProjectId: string | undefined | null): string {
-  if (!externalProjectId) return UNKNOWN_TAIJI_USER_LABEL
-  const idx = externalProjectId.indexOf(":")
-  if (idx <= 0) return externalProjectId  // 没冒号当 username 直接当全名
-  return externalProjectId.slice(0, idx)
-}
 
-/** 从 external_project_id 提取 Taiji 密钥(token_name)（"username:token_name" → "token_name"）。 */
-function _extractTaijiTokenName(externalProjectId: string | undefined | null): string {
-  if (!externalProjectId) return ""
-  const idx = externalProjectId.indexOf(":")
-  if (idx < 0) return externalProjectId
-  return externalProjectId.slice(idx + 1)
-}
 
 function buildTree(
   accounts: ServiceAccount[],
@@ -968,7 +954,7 @@ function buildTree(
             const byUser = new Map<string, ServiceAccount[]>()
             for (const b of buckets) {
               for (const a of b.accounts) {
-                const u = _extractTaijiUsername(a.external_project_id)
+                const u = taijiUsernameLabel(a)
                 if (!byUser.has(u)) byUser.set(u, [])
                 byUser.get(u)!.push(a)
               }
@@ -1469,7 +1455,7 @@ export default function AccountsPage() {
     if (!selectedGroup) return []
     const inSrc = accounts.filter((a) => a.supply_source_id === selectedGroup.supplySourceId)
     if (selectedGroup.username !== undefined) {
-      return inSrc.filter((a) => _extractTaijiUsername(a.external_project_id) === selectedGroup.username)
+      return inSrc.filter((a) => taijiUsernameLabel(a) === selectedGroup.username)
     }
     if (selectedGroup.entityId === undefined) return inSrc
     if (selectedGroup.entityId === null) return inSrc.filter((a) => a.entity_id == null)
