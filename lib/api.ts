@@ -1240,6 +1240,8 @@ export interface DataSourceRow {
   sync_status: string
   is_active: boolean
   created_at: string
+  /** 来自所属 CloudAccount。taiji 货源下，一个数据源就是一个站点。 */
+  provider: string | null
 }
 
 export interface GcpViewSpec {
@@ -1259,7 +1261,10 @@ export interface GcpViewVerifyResult {
 }
 
 export const dataSourcesApi = {
-  list: () => request<DataSourceRow[]>("/api/data-sources/"),
+  list: (provider?: string) =>
+    request<DataSourceRow[]>(
+      provider ? `/api/data-sources/?provider=${encodeURIComponent(provider)}` : "/api/data-sources/",
+    ),
   verifyGcpView: (spec: GcpViewSpec) =>
     request<GcpViewVerifyResult>("/api/data-sources/gcp-view/verify", {
       method: "POST",

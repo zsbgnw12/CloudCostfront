@@ -28,6 +28,7 @@ import {
   useMeteringSummary, useMeteringDaily, useMeteringByService,
   useMeteringProducts, useMeteringDetail, useMeteringDetailCount,
   useAccounts, useSuppliers, useSupplySourcesAll,
+  useDataSources,
 } from "@/hooks/use-data"
 import { cn } from "@/lib/utils"
 import { useChartTheme } from "@/lib/chart-theme"
@@ -89,6 +90,14 @@ export default function MeteringPage() {
   const [dateEnd, setDateEnd] = useState(format(today, "yyyy-MM-dd"))
   const [supplierId, setSupplierId] = useState("__all__")
   const [supplySourceId, setSupplySourceId] = useState("__all__")
+  /**
+   * Taiji 货源专属：站点筛选；"__all__" = 全部站点。
+   *
+   * 一个网关部署 = 一个 CloudAccount = 一个 DataSource，所以站点这一级就是
+   * data_source_id。它本来就贯通到后端（MeteringFilters → querystring → SWR
+   * key），此前只是没有控件去设它。
+   */
+  const [dataSourceId, setDataSourceId] = useState<string>("__all__")
   /** Taiji 货源专属：用户(username) 筛选；"__all__" = 全部用户 */
   const [taijiUsername, setTaijiUsername] = useState<string>("__all__")
   /** 服务账号多选：空数组 = 不限（按上游供应商/货源范围） */
@@ -108,9 +117,19 @@ export default function MeteringPage() {
   useEffect(() => {
     setAccountIds([])
     setSelectedProducts([])
+    setDataSourceId("__all__")
     setTaijiUsername("__all__")
     setPage(1)
   }, [supplySourceId])
+
+  useEffect(() => {
+    // 切站点重置下游：同名的 用户:令牌 在两个站点上是两个不同的令牌，
+    // 残留选择会把 A 站点的账号带到 B 站点的视图里。
+    setAccountIds([])
+    setSelectedProducts([])
+    setTaijiUsername("__all__")
+    setPage(1)
+  }, [dataSourceId])
 
   useEffect(() => {
     // 切用户重置下游账号 + 服务，避免选了 A 用户的账号后切到 B 用户还残留
@@ -118,6 +137,12 @@ export default function MeteringPage() {
     setSelectedProducts([])
     setPage(1)
   }, [taijiUsername])
+
+  /**
+   * taiji 的数据源 = 站点。只在选中 taiji 货源时才会用到，但 hook 不能条件调用，
+   * 所以始终请求；SWR 去重后代价是一次缓存命中。
+   */
+  const { data: taijiDataSources = [] } = useDataSources("taiji")
 
   /** 当前选中货源是否 Taiji（决定要不要显示用户筛选） */
   const selectedSourceIsTaiji = useMemo(() => {
@@ -200,6 +225,7 @@ export default function MeteringPage() {
 
   const scopeExtra = useMemo(
     () => ({
+      data_source_id: dataSourceId !== "__all__" ? Number(dataSourceId) : undefined,
       account_ids: effectiveAccountIds.length > 0 ? effectiveAccountIds : undefined,
       supply_source_id:
         effectiveAccountIds.length === 0 && supplySourceId !== "__all__" ? Number(supplySourceId) : undefined,
@@ -208,7 +234,7 @@ export default function MeteringPage() {
           ? supplierNameForApi
           : undefined,
     }),
-    [effectiveAccountIds, supplySourceId, supplierId, supplierNameForApi],
+    [effectiveAccountIds, supplySourceId, supplierId, supplierNameForApi, dataSourceId],
   )
 
   const filters = useMemo(
@@ -353,6 +379,25 @@ export default function MeteringPage() {
                 </SelectContent>
               </Select>
             </div>
+            {/* Taiji 货源专属：站点筛选（货源 → 站点 → 用户 → 令牌） */}
+            {selectedSourceIsTaiji && (
+              <div className="space-y-1.5">
+                <Label className="text-xs">站点</Label>
+                <Select
+                  value={dataSourceId}
+                  onValueChange={(v) => setDataSourceId(v)}
+                  disabled={taijiDataSources.length === 0}
+                >
+                  <SelectTrigger className="h-8 w-44 text-sm"><SelectValue placeholder="全部站点" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__all__">全部站点 ({taijiDataSources.length})</SelectItem>
+                    {taijiDataSources.map((ds) => (
+                      <SelectItem key={ds.id} value={String(ds.id)}>{ds.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             {/* Taiji 货源专属：用户筛选（在货源和服务账号中间） */}
             {selectedSourceIsTaiji && (
               <div className="space-y-1.5">
