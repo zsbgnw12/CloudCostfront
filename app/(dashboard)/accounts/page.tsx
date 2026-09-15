@@ -27,7 +27,7 @@ import {
   type ServiceAccount, type ServiceAccountDetail, type HistoryItem, type SupplySourceItem, type EntityItem,
   type AzureConsentInvite, type AzureConsentStartResponse, type AzureDiscoveredSubscription,
 } from "@/lib/api"
-import { useAccounts, useSupplySourcesAll, useEntitiesAll } from "@/hooks/use-data"
+import { useAccounts, useSupplySourcesAll, useEntitiesAll, useDataSources } from "@/hooks/use-data"
 import useSWR from "swr"
 import { cn } from "@/lib/utils"
 import { taijiUsernameLabel } from "@/lib/taiji"
@@ -845,9 +845,10 @@ function mergeAzureCredentialJson(
 
 /* ─── Tree: 供应商 → 货源(云) → 主体/用户 → 账号 ───────────────
  * 非 Taiji 货源：供应商 → 货源 → 主体 → 服务账号
- * Taiji 货源 ：供应商 → 货源 → 用户 (= external_project_id 冒号前段) → 密钥(= 服务账号)
- *   Taiji 不走主体语义（账号 entity_id 永远 NULL），改按 username 分组，
- *   每个 username 下挂多个 密钥(token_name)，UI 文案换"用户/密钥"。
+ * Taiji 货源 ：供应商 → 货源 → 站点 → 用户 → 密钥(= 服务账号)
+ *   Taiji 不走主体语义（账号 entity_id 永远 NULL）。站点即 data_source_id —— 一个
+ *   网关部署对应一个 CloudAccount 和一个 DataSource；同一个 用户:令牌 名字在两个
+ *   站点上是两个不同的令牌，所以用户必须按站点分开统计。
  */
 /** 主体桶。entityId === null 表示「未分配主体」分组（accounts.entity_id 为空）。 */
 export interface EntityBucket {
@@ -856,16 +857,22 @@ export interface EntityBucket {
   note: string | null
   accounts: ServiceAccount[]
 }
-/** Taiji 用户桶。username 来自 external_project_id 冒号前段 */
+/** Taiji 用户桶。username 来自 projects.taiji_username（旧行回退解析 external_project_id） */
 export interface UserBucket {
   username: string
   accounts: ServiceAccount[]
+}
+/** Taiji 站点桶。一个网关部署 = 一个 CloudAccount = 一个 DataSource。 */
+export interface SiteBucket {
+  dataSourceId: number | null
+  siteName: string
+  users: UserBucket[]
 }
 interface SourceBucket {
   supplySourceId: number
   provider: string
   entities: EntityBucket[]   // 非 Taiji 用
-  users?: UserBucket[]       // Taiji 专用；其他 provider 留 undefined
+  sites?: SiteBucket[]       // Taiji 专用；其他 provider 留 undefined
 }
 interface SupplierTreeNode {
   supplierName: string
@@ -873,6 +880,8 @@ interface SupplierTreeNode {
 }
 
 const UNASSIGNED_ENTITY_LABEL = "未分配主体"
+/** 账号没有绑定数据源时的站点标签。 */
+const UNKNOWN_SITE_LABEL = "未归属站点"
 
 
 
@@ -880,6 +889,8 @@ function buildTree(
   accounts: ServiceAccount[],
   sources: SupplySourceItem[],
   entities: EntityItem[],
+  /** data_source_id → 站点名。缺失的 id 退化为 "数据源 #N"。 */
+  dataSourceNames: Map<number, string>,
 ): SupplierTreeNode[] {
   const srcById = new Map(sources.map((s) => [s.id, s]))
 
@@ -948,26 +959,40 @@ function buildTree(
             return (x.entityName ?? "").localeCompare(y.entityName ?? "", "zh-CN")
           })
           const provider = srcById.get(supplySourceId)?.provider ?? "?"
-          // Taiji 货源特殊：按 username 重新分组形成 users 桶，挂在 source 上
-          let users: UserBucket[] | undefined
+          // Taiji 货源特殊：先按站点(data_source_id)、再按用户重新分组。
+          // 顺序不能反 —— 同一个 用户:令牌 名字在两个站点上是两个不同的令牌，
+          // 先按用户分组会把它们并成一个。
+          let sites: SiteBucket[] | undefined
           if (provider === "taiji") {
-            const byUser = new Map<string, ServiceAccount[]>()
+            const bySite = new Map<number | null, Map<string, ServiceAccount[]>>()
             for (const b of buckets) {
               for (const a of b.accounts) {
+                const dsId = a.data_source_id ?? null
+                if (!bySite.has(dsId)) bySite.set(dsId, new Map())
+                const byUser = bySite.get(dsId)!
                 const u = taijiUsernameLabel(a)
                 if (!byUser.has(u)) byUser.set(u, [])
                 byUser.get(u)!.push(a)
               }
             }
-            users = Array.from(byUser.entries())
-              .map(([username, accts]) => ({ username, accounts: accts }))
-              .sort((x, y) => x.username.localeCompare(y.username, "zh-CN"))
+            sites = Array.from(bySite.entries())
+              .map(([dataSourceId, byUser]) => ({
+                dataSourceId,
+                siteName:
+                  dataSourceId == null
+                    ? UNKNOWN_SITE_LABEL
+                    : (dataSourceNames.get(dataSourceId) ?? `数据源 #${dataSourceId}`),
+                users: Array.from(byUser.entries())
+                  .map(([username, accts]) => ({ username, accounts: accts }))
+                  .sort((x, y) => x.username.localeCompare(y.username, "zh-CN")),
+              }))
+              .sort((x, y) => x.siteName.localeCompare(y.siteName, "zh-CN"))
           }
           return {
             supplySourceId,
             provider,
             entities: buckets,
-            users,
+            sites,
           }
         })
         .sort((x, y) => x.provider.localeCompare(y.provider)),
@@ -988,6 +1013,8 @@ export type SelectedSupplySource = {
   provider: string
   entityId?: number | null
   entityName?: string | null
+  /** Taiji：选中的站点。undefined = 未选到站点这一级。 */
+  dataSourceId?: number | null
   username?: string
 }
 
@@ -1442,9 +1469,15 @@ export default function AccountsPage() {
     })
   }, [entities, sources, visibleProviders])
 
+  const { data: taijiDataSources = [] } = useDataSources("taiji")
+  const dataSourceNames = useMemo(
+    () => new Map(taijiDataSources.map((ds) => [ds.id, ds.name])),
+    [taijiDataSources],
+  )
+
   const tree = useMemo(
-    () => buildTree(accounts, visibleSources, visibleEntities),
-    [accounts, visibleSources, visibleEntities],
+    () => buildTree(accounts, visibleSources, visibleEntities, dataSourceNames),
+    [accounts, visibleSources, visibleEntities, dataSourceNames],
   )
 
   // 选中节点的过滤：货源必匹配；
@@ -1454,6 +1487,13 @@ export default function AccountsPage() {
   const groupAccounts = useMemo(() => {
     if (!selectedGroup) return []
     const inSrc = accounts.filter((a) => a.supply_source_id === selectedGroup.supplySourceId)
+    if (selectedGroup.dataSourceId !== undefined) {
+      // 站点必须一起比：同一个 用户:令牌 名字在两个站点上是两个不同的令牌，
+      // 只按用户名过滤会把另一个站点的账号一起带出来。
+      const inSite = inSrc.filter((a) => (a.data_source_id ?? null) === selectedGroup.dataSourceId)
+      if (selectedGroup.username === undefined) return inSite
+      return inSite.filter((a) => taijiUsernameLabel(a) === selectedGroup.username)
+    }
     if (selectedGroup.username !== undefined) {
       return inSrc.filter((a) => taijiUsernameLabel(a) === selectedGroup.username)
     }
@@ -1548,9 +1588,10 @@ export default function AccountsPage() {
     supplierName: string,
     supplySourceId: number,
     provider: string,
-    username: string,
+    username: string | undefined,
+    dataSourceId: number | null,
   ) => {
-    setSelectedGroup({ supplierName, supplySourceId, provider, username })
+    setSelectedGroup({ supplierName, supplySourceId, provider, username, dataSourceId })
     setSelectedId(null); setDetail(null); setShowCreds(false); setCreds(null)
     setBulkSelectedIds(new Set())
     setAccountsPage(1)
@@ -2450,7 +2491,7 @@ export default function AccountsPage() {
               onKeyDown={(e) => { if (e.key === "Escape") setSearchQuery("") }}
               placeholder={
                 selectedGroup
-                  ? `在「${selectedGroup.supplierName} / ${PROVIDER_LABELS[selectedGroup.provider] ?? selectedGroup.provider.toUpperCase()}${selectedGroup.username !== undefined ? ` / 用户 ${selectedGroup.username}` : ""}${selectedGroup.entityId !== undefined ? ` / ${selectedGroup.entityName ?? UNASSIGNED_ENTITY_LABEL}` : ""}」内搜索服务账号...`
+                  ? `在「${selectedGroup.supplierName} / ${PROVIDER_LABELS[selectedGroup.provider] ?? selectedGroup.provider.toUpperCase()}${selectedGroup.dataSourceId !== undefined ? ` / 站点 ${selectedGroup.dataSourceId == null ? UNKNOWN_SITE_LABEL : (dataSourceNames.get(selectedGroup.dataSourceId) ?? `#${selectedGroup.dataSourceId}`)}` : ""}${selectedGroup.username !== undefined ? ` / 用户 ${selectedGroup.username}` : ""}${selectedGroup.entityId !== undefined ? ` / ${selectedGroup.entityName ?? UNASSIGNED_ENTITY_LABEL}` : ""}」内搜索服务账号...`
                   : "全局搜索：账号名 / 项目 ID / 供应商 / 主体 / 客户编号..."
               }
               // 用 Input 自身默认的 transparent + dark:bg-input/30 透明效果，
@@ -2852,6 +2893,16 @@ export default function AccountsPage() {
                         <h2 className="text-lg font-semibold text-foreground leading-tight">{selectedGroup.supplierName}</h2>
                         <p className="text-sm text-muted-foreground mt-0.5">
                           {PROVIDER_LABELS[selectedGroup.provider] ?? selectedGroup.provider.toUpperCase()}
+                          {selectedGroup.dataSourceId !== undefined && (
+                            <>
+                              <span className="mx-1.5 text-muted-foreground/60">/</span>
+                              <span>
+                                站点 {selectedGroup.dataSourceId == null
+                                  ? UNKNOWN_SITE_LABEL
+                                  : (dataSourceNames.get(selectedGroup.dataSourceId) ?? `#${selectedGroup.dataSourceId}`)}
+                              </span>
+                            </>
+                          )}
                           {selectedGroup.username !== undefined && (
                             <>
                               <span className="mx-1.5 text-muted-foreground/60">/</span>
@@ -3369,11 +3420,13 @@ interface TreeCallbacks {
     entityId: number | null,
     entityName: string | null,
   ) => void
+  /** 选中 Taiji 的站点或用户。username 省略 = 只选到站点这一级。 */
   onSelectUser: (
     supplierName: string,
     supplySourceId: number,
     provider: string,
-    username: string,
+    username: string | undefined,
+    dataSourceId: number | null,
   ) => void
   /** 该用户能否管理某 provider 下的主体（增/改/删）。admin/ops → 任意 provider。 */
   canManageEntityProvider: (provider: string) => boolean
@@ -3387,14 +3440,16 @@ function SupplierNode({ node, ...rest }: { node: SupplierTreeNode } & TreeCallba
   // Taiji 走 users 桶（与 entities 镜像内容相同账号集），其他走 entities；
   // 求总数取任一桶即可
   const total = node.sources.reduce((s, x) => {
-    if (x.provider === "taiji" && x.users) {
-      return s + x.users.reduce((t, u) => t + u.accounts.length, 0)
+    if (x.provider === "taiji" && x.sites) {
+      return s + x.sites.reduce((t, site) => t + site.users.reduce((n, u) => n + u.accounts.length, 0), 0)
     }
     return s + x.entities.reduce((t, e) => t + e.accounts.length, 0)
   }, 0)
   const failed = node.sources.reduce((s, x) => {
-    const buckets = x.provider === "taiji" && x.users ? x.users : x.entities
-    return s + buckets.reduce((t, b) => t + failedCount(b.accounts), 0)
+    if (x.provider === "taiji" && x.sites) {
+      return s + x.sites.reduce((t, site) => t + site.users.reduce((n, u) => n + failedCount(u.accounts), 0), 0)
+    }
+    return s + x.entities.reduce((t, b) => t + failedCount(b.accounts), 0)
   }, 0)
   return (
     <div className="mb-1">
@@ -3441,9 +3496,11 @@ function SourceNode({
   // Taiji 走 users 桶；其他 provider 走 entities 桶
   const isTaiji = src.provider === "taiji"
   const total = isTaiji
-    ? (src.users ?? []).reduce((s, u) => s + u.accounts.length, 0)
+    ? (src.sites ?? []).reduce((s, site) => s + site.users.reduce((n, u) => n + u.accounts.length, 0), 0)
     : src.entities.reduce((s, e) => s + e.accounts.length, 0)
-  const failed = (isTaiji ? (src.users ?? []) : src.entities).reduce((s, b) => s + failedCount(b.accounts), 0)
+  const failed = isTaiji
+    ? (src.sites ?? []).reduce((s, site) => s + site.users.reduce((n, u) => n + failedCount(u.accounts), 0), 0)
+    : src.entities.reduce((s, b) => s + failedCount(b.accounts), 0)
   // Taiji 没有主体 CRUD（按 username 派生分组，不可编辑），所以隐藏「+」按钮
   const canManage = !isTaiji && canManageEntityProvider(src.provider)
   return (
@@ -3482,13 +3539,13 @@ function SourceNode({
           </button>
         )}
       </div>
-      {open && (isTaiji ? (src.users ?? []).map((bucket) => (
-        <UserNode
-          key={`u:${bucket.username}`}
+      {open && (isTaiji ? (src.sites ?? []).map((site) => (
+        <SiteNode
+          key={`s:${site.dataSourceId ?? "__none__"}`}
           supplierName={supplierName}
           supplySourceId={src.supplySourceId}
           provider={src.provider}
-          bucket={bucket}
+          site={site}
           selectedGroup={selectedGroup}
           onSelectUser={onSelectUser}
         />
@@ -3510,11 +3567,83 @@ function SourceNode({
   )
 }
 
+/**
+ * Taiji 站点节点。一个网关部署 = 一个 CloudAccount = 一个 DataSource。
+ *
+ * 站点必须在用户之上：同一个 用户:令牌 名字在两个站点上是两个不同的令牌，把用户
+ * 放在外层会把它们并成一个。名字取自数据源；账号没绑数据源时归入「未归属站点」。
+ */
+function SiteNode({
+  supplierName,
+  supplySourceId,
+  provider,
+  site,
+  selectedGroup,
+  onSelectUser,
+}: {
+  supplierName: string
+  supplySourceId: number
+  provider: string
+  site: SiteBucket
+  selectedGroup: SelectedSupplySource | null
+  onSelectUser: TreeCallbacks["onSelectUser"]
+}) {
+  const [open, setOpen] = useState(true)
+  const total = site.users.reduce((s, u) => s + u.accounts.length, 0)
+  const failed = site.users.reduce((s, u) => s + failedCount(u.accounts), 0)
+  const isSelected =
+    selectedGroup?.supplySourceId === supplySourceId
+    && selectedGroup?.dataSourceId === site.dataSourceId
+    && selectedGroup?.username === undefined
+
+  return (
+    <div className="ml-6">
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          onClick={() => setOpen(!open)}
+          className="flex items-center justify-center w-5 h-5 rounded hover:bg-accent text-muted-foreground"
+          aria-label={open ? "折叠" : "展开"}
+        >
+          {open ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+        </button>
+        <button
+          type="button"
+          onClick={() => onSelectUser(supplierName, supplySourceId, provider, undefined, site.dataSourceId)}
+          className={cn(
+            "flex items-center gap-2 flex-1 px-2 py-1 rounded text-xs",
+            isSelected ? "bg-primary/20 text-primary font-medium" : "text-muted-foreground hover:bg-accent",
+          )}
+          title={`${site.siteName} · ${total} 个密钥`}
+        >
+          <span className="opacity-70 text-[10px] w-3 text-center">🏠</span>
+          <span className="truncate">{site.siteName}</span>
+          <FailDot n={failed} />
+          <span className="ml-auto text-[10px]">{total}</span>
+        </button>
+      </div>
+      {open && site.users.map((bucket) => (
+        <UserNode
+          key={`u:${bucket.username}`}
+          supplierName={supplierName}
+          supplySourceId={supplySourceId}
+          provider={provider}
+          dataSourceId={site.dataSourceId}
+          bucket={bucket}
+          selectedGroup={selectedGroup}
+          onSelectUser={onSelectUser}
+        />
+      ))}
+    </div>
+  )
+}
+
 /** Taiji 用户节点：和 EntityNode 同级，但不能编辑/删除（username 是 external_project_id 派生的，无独立实体）。 */
 function UserNode({
   supplierName,
   supplySourceId,
   provider,
+  dataSourceId,
   bucket,
   selectedGroup,
   onSelectUser,
@@ -3522,18 +3651,21 @@ function UserNode({
   supplierName: string
   supplySourceId: number
   provider: string
+  dataSourceId: number | null
   bucket: UserBucket
   selectedGroup: SelectedSupplySource | null
   onSelectUser: TreeCallbacks["onSelectUser"]
 }) {
+  // 站点要一起比：两个站点上可以各有一个同名用户，只比 username 会同时高亮。
   const isSelected =
     selectedGroup?.supplySourceId === supplySourceId
+    && selectedGroup?.dataSourceId === dataSourceId
     && selectedGroup?.username === bucket.username
   return (
-    <div className="ml-6 flex items-center gap-1">
+    <div className="ml-10 flex items-center gap-1">
       <button
         type="button"
-        onClick={() => onSelectUser(supplierName, supplySourceId, provider, bucket.username)}
+        onClick={() => onSelectUser(supplierName, supplySourceId, provider, bucket.username, dataSourceId)}
         className={cn(
           "flex items-center gap-2 flex-1 px-2 py-1 rounded text-xs",
           isSelected ? "bg-primary/20 text-primary font-medium" : "text-muted-foreground hover:bg-accent",
