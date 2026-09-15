@@ -32,6 +32,7 @@ import {
 } from "@/hooks/use-data"
 import { cn } from "@/lib/utils"
 import { useChartTheme } from "@/lib/chart-theme"
+import { taijiUsernameOf } from "@/lib/taiji"
 
 const PROVIDER_LABELS: Record<string, string> = { aws: "AWS", gcp: "GCP", azure: "Azure", taiji: "Taiji" }
 
@@ -150,13 +151,6 @@ export default function MeteringPage() {
     return sources.find((s) => String(s.id) === supplySourceId)?.provider === "taiji"
   }, [supplySourceId, sources])
 
-  /** 从 external_project_id "user:token" 取 username */
-  const _taijiUsernameOf = (extId: string | null | undefined): string => {
-    if (!extId) return ""
-    const i = extId.indexOf(":")
-    return i < 0 ? extId : extId.slice(0, i)
-  }
-
   const sourcesInScope = useMemo(() => {
     if (supplierId === "__all__") return sources
     return sources.filter((s) => String(s.supplier_id) === supplierId)
@@ -182,7 +176,7 @@ export default function MeteringPage() {
       if (supplySourceId !== "__all__" && a.supply_source_id !== Number(supplySourceId)) return false
       // Taiji 货源 + 选中具体用户 → 用 external_project_id 前缀过滤
       if (selectedSourceIsTaiji && taijiUsername !== "__all__") {
-        if (_taijiUsernameOf(a.external_project_id) !== taijiUsername) return false
+        if (taijiUsernameOf(a) !== taijiUsername) return false
       }
       return true
     })
@@ -195,7 +189,7 @@ export default function MeteringPage() {
     const set = new Set<string>()
     for (const a of accounts) {
       if (a.supply_source_id !== ssid) continue
-      const u = _taijiUsernameOf(a.external_project_id)
+      const u = taijiUsernameOf(a)
       if (u) set.add(u)
     }
     return Array.from(set).sort((x, y) => x.localeCompare(y, "zh-CN"))

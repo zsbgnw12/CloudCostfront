@@ -192,6 +192,8 @@ export interface ServiceAccount {
   /** 主体名称；entity_id 为 null 时也为 null。 */
   entity_name?: string | null
   external_project_id: string
+  /** taiji 货源专用：projects.taiji_username。后端回填之前写入的行为 null。 */
+  taiji_username?: string | null
   status: string
   order_method?: string | null
   /** 销售系统分配的客户编号，可能多个；空数组即 "未分配"。 */

@@ -20,6 +20,7 @@ import { useAccounts, useSuppliers, useSupplySourcesAll } from "@/hooks/use-data
 import { cn } from "@/lib/utils"
 import { format, startOfMonth, endOfMonth, subMonths, startOfQuarter, endOfQuarter, subQuarters, subDays } from "date-fns"
 import { useChartTheme } from "@/lib/chart-theme"
+import { taijiUsernameOf } from "@/lib/taiji"
 
 const PROVIDER_LABELS: Record<string, string> = { aws: "AWS", gcp: "GCP", azure: "Azure", taiji: "Taiji" }
 
@@ -137,13 +138,6 @@ export default function DailyReportPage() {
     return sources.find((s) => String(s.id) === supplySourceId)?.provider === "taiji"
   }, [supplySourceId, sources])
 
-  /** 从 external_project_id "user:token" 取 username */
-  const _taijiUsernameOf = (extId: string | null | undefined): string => {
-    if (!extId) return ""
-    const i = extId.indexOf(":")
-    return i < 0 ? extId : extId.slice(0, i)
-  }
-
   /** 当前 Taiji 货源下出现的所有用户名 */
   const taijiUsernameOptions = useMemo(() => {
     if (!selectedSourceIsTaiji) return [] as string[]
@@ -151,7 +145,7 @@ export default function DailyReportPage() {
     const set = new Set<string>()
     for (const a of accounts) {
       if (a.supply_source_id !== ssid) continue
-      const u = _taijiUsernameOf(a.external_project_id)
+      const u = taijiUsernameOf(a)
       if (u) set.add(u)
     }
     return Array.from(set).sort((x, y) => x.localeCompare(y, "zh-CN"))
@@ -172,7 +166,7 @@ export default function DailyReportPage() {
       if (supplySourceId !== "__all__" && a.supply_source_id !== Number(supplySourceId)) return false
       // Taiji 用户筛选：external_project_id 前缀过滤
       if (selectedSourceIsTaiji && taijiUsername !== "__all__") {
-        if (_taijiUsernameOf(a.external_project_id) !== taijiUsername) return false
+        if (taijiUsernameOf(a) !== taijiUsername) return false
       }
       return true
     })
