@@ -43,6 +43,19 @@ const SUPPLY_SOURCE_ALL = "__all_supply_sources__"
 const ACCOUNT_ALL = "__all_accounts__"
 const SUPPLIER_FILTER_ALL = "__all_suppliers__"
 
+/**
+ * 告警规则 target_id 里的项目引用。
+ * 新写入一律用 "pid:<服务账号 id>"：external_project_id 跨站点不唯一，按它配的规则会把
+ * 多个站点同名账号的费用加在一起。旧规则里的裸 external_project_id 仍按原样解析。
+ * 必须带前缀：AWS 的 external_project_id 本身就是纯数字。
+ */
+const PROJECT_REF_PREFIX = "pid:"
+
+const projectRef = (accountId: number) => `${PROJECT_REF_PREFIX}${accountId}`
+
+const splitTargetRefs = (targetId: string | null | undefined) =>
+  (targetId ?? "").split(",").map((s) => s.trim()).filter(Boolean)
+
 const fmt = (v: number) => `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
 export default function AlertsPage() {
@@ -149,18 +162,26 @@ export default function AlertsPage() {
       end_date: "",
     })
 
+  /** 旧引用(external_project_id)可能对应多个站点的账号，取第一个仅用于展示。 */
+  const accountForRef = (ref: string) =>
+    ref.startsWith(PROJECT_REF_PREFIX)
+      ? accounts.find((a) => projectRef(a.id) === ref)
+      : accounts.find((a) => a.external_project_id === ref)
+
+  const refExternalId = (ref: string) => {
+    if (!ref.startsWith(PROJECT_REF_PREFIX)) return ref
+    return accountForRef(ref)?.external_project_id ?? ref
+  }
+
   const selectedAccountName = (targetId: string | null) => {
     if (!targetId) return "全局"
-    // 多项目模式:逗号分隔的 ID 列表
+    // 多项目模式:逗号分隔的引用列表
     if (targetId.includes(",")) {
-      const ids = targetId.split(",").map((s) => s.trim()).filter(Boolean)
-      const names = ids.map((id) => {
-        const a = accounts.find((x) => x.external_project_id === id)
-        return a ? a.name : id
-      })
-      return `${ids.length} 个项目: ${names.slice(0, 2).join(", ")}${names.length > 2 ? ` 等` : ""}`
+      const refs = splitTargetRefs(targetId)
+      const names = refs.map((ref) => accountForRef(ref)?.name ?? ref)
+      return `${refs.length} 个项目: ${names.slice(0, 2).join(", ")}${names.length > 2 ? ` 等` : ""}`
     }
-    const a = accounts.find((x) => x.external_project_id === targetId)
+    const a = accountForRef(targetId.trim())
     return a ? `${a.name} (${a.external_project_id})` : targetId
   }
 
@@ -184,15 +205,16 @@ export default function AlertsPage() {
       start_date: rule.start_date ?? "",
       end_date: rule.end_date ?? "",
     }
-    // 多项目类型(月/年/自定义):把逗号分隔的 external_project_id 反查回 account.id 列表
+    // 多项目类型(月/年/自定义):把逗号分隔的引用反查回 account.id 列表。
+    // 旧引用(external_project_id)命中所有同名账号，保存后仍是这些账号的合计，口径不变。
     if (MULTI_PROJECT_TYPES.has(rule.threshold_type) && rule.target_id) {
-      const ids = rule.target_id.split(",").map((s) => s.trim()).filter(Boolean)
+      const refs = splitTargetRefs(rule.target_id)
       base.multi_account_ids = accounts
-        .filter((a) => ids.includes(a.external_project_id))
+        .filter((a) => refs.includes(projectRef(a.id)) || refs.includes(a.external_project_id))
         .map((a) => a.id)
     } else if (rule.target_id) {
       // 单 project:回填四级选择器(供应商 / 货源 / 主体 / 账号)
-      const acc = accounts.find((a) => a.external_project_id === rule.target_id)
+      const acc = accountForRef(rule.target_id.trim())
       if (acc) {
         const ss = supplySources.find((s) => s.id === acc.supply_source_id)
         base.supplier_id = String(ss?.supplier_id ?? "")
@@ -211,14 +233,14 @@ export default function AlertsPage() {
       let target_type = "project"
       let target_id: string | undefined
       if (MULTI_PROJECT_TYPES.has(form.threshold_type)) {
-        // 多项目月/年预算合计:target_id = 逗号分隔的 external_project_id
+        // 多项目月/年预算合计:target_id = 逗号分隔的 pid:<账号 id>
         const picked = accounts.filter((a) => form.multi_account_ids.includes(a.id))
         target_type = "project_group"
-        target_id = picked.map((a) => a.external_project_id).join(",") || undefined
+        target_id = picked.map((a) => projectRef(a.id)).join(",") || undefined
       } else if (form.account_id) {
         // 用户明确选了某个账号
         const account = accounts.find((a) => String(a.id) === form.account_id)
-        target_id = account?.external_project_id ?? undefined
+        target_id = account ? projectRef(account.id) : undefined
       } else {
         // 用户未选具体账号 → 用上方"供应商/货源/主体"过滤出的账号集合
         // 1 个 = 等价单账号；多个 = 单类型告警不支持，提示换多项目类型
@@ -227,7 +249,7 @@ export default function AlertsPage() {
           return
         }
         if (formAccounts.length === 1) {
-          target_id = formAccounts[0].external_project_id
+          target_id = projectRef(formAccounts[0].id)
         } else {
           toast.error(
             `当前过滤命中 ${formAccounts.length} 个账号；` +
@@ -713,7 +735,7 @@ export default function AlertsPage() {
                             <span className="text-muted-foreground">实际: <span className={cn("font-mono", s.triggered ? "text-red-400" : "text-foreground")}>{fmtVal}</span> / 阈值: <span className="text-foreground font-mono">{fmtThreshold}</span></span>
                             <span className={cn("font-mono font-medium", s.triggered ? "text-red-400" : s.pct >= 80 ? "text-yellow-400" : "text-green-400")}>{Math.round(s.pct)}%</span>
                           </div>
-                          <p className="text-xs text-muted-foreground">{s.account_name} ({s.external_project_id})</p>
+                          <p className="text-xs text-muted-foreground">{s.account_name} ({splitTargetRefs(s.external_project_id).map(refExternalId).join(",")})</p>
                         </div>
                       )
                     })}
